@@ -1,18 +1,32 @@
 # ELiMaLoc
 **EKF-based LiDAR-Inertial Map matching Localization**
 
-**Made by Jaeyoung Jo <wodud3743@gmail.com>**
 
-[![Demo Video](https://img.youtube.com/vi/oegzw7mTZOk/0.jpg)](https://youtu.be/oegzw7mTZOk)
+<p align="center">
+    <a href="https://youtu.be/oegzw7mTZOk">
+        <img src="https://img.youtube.com/vi/oegzw7mTZOk/0.jpg" alt="Demo Video">
+    </a>
+</p>
 
+## Menu
+- [System Architecture](#system-architecture)
+- [Dependency](#dependency)
+- [Usage](#usage)
+- [EKF Localization](#ekf_localization)
+- [PCM Matching](#pcm_matching)
+- [Parameter Settings](#parameter-settings)
 
-# Brief
-- A localization package using various sensors (IMU, LiDAR, CAN, etc.)
+# System Architecture
+
+<p align='center'>
+    <img src="./config/doc/system_architecture.png" alt="drawing" width="800"/>
+</p>
+
 ### Packages
 - `ekf_localization`: 24-DOF EKF-based localization
 - `pcm_matching`: Point cloud Map Matching
 
-# Folder Structure
+### Folder Structure
 ```
 localization/
 ├─ ekf_localization/
@@ -100,7 +114,8 @@ roslaunch pcm_matching pcm_matching.launch
 - Provides key functions and structures for localization algorithms
   - Functions related to Lie Algebra, structures related to EKF State
 
-# Parameter Settings /config/localization.ini
+# Parameter Settings
+ /config/localization.ini
 
 ## [common_variable]
 - Sensor settings and basic coordinate system settings
