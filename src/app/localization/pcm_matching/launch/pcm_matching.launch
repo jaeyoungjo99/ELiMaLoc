@@ -1,0 +1,26 @@
+<!-- -->
+<launch>
+    <arg name="location"    default="kcity"/>
+    <arg name="mode"        default="real"/>
+    <arg name="bag"         default="false"/>
+
+    <!-- KATRI & KCity -->
+    <arg name="map_path_katri" default="resources/map/pcm/37.238551_126.772530_0.000000_kcity_1203_filtered_02.pcd"/>
+
+    <!-- Pangyo Station -->
+    <arg name="map_path_pangyo" default="resources/map/pcm/37.394776_127.111158_40.000000_pangyo.pcd"/>
+
+    <!-- Hanyang University -->
+    <arg name="map_path_hanyang" default="resources/map/pcm/37.558200_127.044500_66.000000_hanyang_full_imu_raw_filtered.pcd"/>
+
+    <param name="/use_sim_time" value="$(arg bag)"/>
+    <rosparam file="config/rosparam_system.yaml"    command="load"/>
+    <node pkg="pcm_matching" type="pcm_matching" name="pcm_matching" output="screen">
+        <param name="location"  value="$(arg location)"/>
+        <param name="mode"      value="$(arg mode)"/>   
+
+        <param name="map_path"  value="$(arg map_path_katri)" if="$(eval location=='katri' or location=='kcity')"/>
+        <param name="map_path"  value="$(arg map_path_pangyo)" if="$(eval location=='pangyo')"/>
+        <param name="map_path"  value="$(arg map_path_hanyang)" if="$(eval location=='hanyang')"/>
+    </node>
+</launch>

@@ -1,0 +1,12 @@
+# Task period [s]
+task_period:
+
+  ## RTE
+  period_tf_dynamic: 0.01
+  period_tf_static: 10
+
+  ## APP
+  # Localization
+  period_ekf_localization: 0.005
+  period_pcm_matching: 1.0
+
