@@ -244,10 +244,10 @@ std::vector<VoxelHashMap::Voxel> VoxelHashMap::GetAdjacentVoxels(const PointStru
 
 std::vector<PointStruct> VoxelHashMap::Pointcloud() const {
     std::vector<PointStruct> points;
-    points.reserve(max_points_per_voxel_ * map_.size()); // 복셀내 최대 포인트 수 * 전체 복셀수  할당
-    for (const auto& [voxel, voxel_block] : map_) {      // 각 복셀 순회
-        (void)voxel;                                     // 사용하지 않음을 컴파일러에 명시
-        for (const auto& point : voxel_block.points) {   // 복셀 내 포인트 순회
+    points.reserve(max_points_per_voxel_ * map_.size()); // max points per voxel * total voxels
+    for (const auto& [voxel, voxel_block] : map_) {      // iterate over each voxel
+        (void)voxel;                                     // unused
+        for (const auto& point : voxel_block.points) {   // iterate over points in voxel
             points.push_back(point);
         }
     }
@@ -256,15 +256,15 @@ std::vector<PointStruct> VoxelHashMap::Pointcloud() const {
 
 std::vector<CovStruct> VoxelHashMap::Covariances() const {
     std::vector<CovStruct> covariances;
-    covariances.reserve(map_.size());               // 복셀내 최대 포인트 수 * 전체 복셀수  할당
-    for (const auto& [voxel, voxel_block] : map_) { // 각 복셀 순회
-        (void)voxel;                                // 사용하지 않음을 컴파일러에 명시
+    covariances.reserve(map_.size()); // max points per voxel * total voxels
+    for (const auto& [voxel, voxel_block] : map_) { // iterate over each voxel
+        (void)voxel;                                // unused
         if (voxel_block.points.size() > 2) covariances.push_back(voxel_block.covariance);
     }
     return covariances;
 }
 
-// global로 이동된 point update
+// update points in global frame
 void VoxelHashMap::Update(const RadarPointVector& points, const Eigen::Vector3d& origin) { AddPoints(points); }
 
 void VoxelHashMap::AddPoints(const RadarPointVector& points) {
@@ -276,7 +276,6 @@ void VoxelHashMap::AddPoints(const RadarPointVector& points) {
         auto search = map_.find(voxel);
         if (search != map_.end()) {
             auto& voxel_block = search->second;
-            // voxel_block.AddPoint(point, max_points_per_voxel_);
             voxel_block.AddPointWithSpacing(point, max_points_per_voxel_);
         }
         else {

@@ -143,6 +143,7 @@ private: // Visualization
     void VisualizeCovMap(ros::Publisher &marker_pub, const std::vector<CovStruct> &vec_cov_map, ros::Time thisStamp,
                          std::string thisFrame);
     void PublishPcmOdom(Eigen::Matrix4d icp_ego_pose, ros::Time thisStamp, std::string thisFrame);
+    void BroadcastStaticTf(ros::Time thisStamp, std::string lidarFrame, std::string imuFrame);
 
 private: // utils
     pcl::PointCloud<PointXYZIT> OusterCloudmsg2cloud(sensor_msgs::PointCloud2 cloudmsg);
@@ -158,7 +159,6 @@ private: // utils
         pcl::toROSMsg(*thisCloud, tempCloud);
         tempCloud.header.stamp = thisStamp;
         tempCloud.header.frame_id = thisFrame;
-        // if (thisPub.getNumSubscribers() != 0)
         thisPub.publish(tempCloud);
         return tempCloud;
     }
@@ -181,38 +181,37 @@ private: // utils
             if (b_cal_norm == true) {
                 const CovStruct &cov_data = vec_points[i].covariance;
 
-                // 공분산 행렬을 분석하여 Eigenvalue와 Eigenvector 계산
                 Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eig_solver(cov_data.cov);
                 Eigen::Vector3d eigenvalues = eig_solver.eigenvalues();
                 Eigen::Matrix3d eigenvectors = eig_solver.eigenvectors();
 
-                // Eigenvalue와 Eigenvector를 크기순으로 정렬
+                // sort eigenvalues and eigenvectors by size
                 SortEigenvaluesAndEigenvectors(eigenvalues, eigenvectors);
 
-                // 색상 설정 (Eigenvector 방향에 따라 색상 달리)
-                Eigen::Vector3d main_axis = eigenvectors.col(2); // 주축 (가장 큰 Eigenvalue에 해당하는 Eigenvector)
-                pcl_point.normal_x = fabs(main_axis(0));         // X축 방향 성분을 빨강색에 반영
-                pcl_point.normal_y = fabs(main_axis(1));         // Y축 방향 성분을 녹색에 반영
-                pcl_point.normal_z = fabs(main_axis(2));         // Z축 방향 성분을 파랑색에 반영
+                // set color based on eigenvector direction
+                Eigen::Vector3d main_axis = eigenvectors.col(2); // main axis (eigenvector corresponding to largest eigenvalue)
+                pcl_point.normal_x = fabs(main_axis(0));         // reflect X-axis component in red
+                pcl_point.normal_y = fabs(main_axis(1));         // reflect Y-axis component in green
+                pcl_point.normal_z = fabs(main_axis(2));         // reflect Z-axis component in blue
             }
         }
 
-        // 크기 및 속성 업데이트
+        // update size and properties
         pcl_points->width = pcl_points->points.size();
         pcl_points->height = 1;
         pcl_points->is_dense = true;
     }
 
     void Pcl2PointStruct(const pcl::PointCloud<PointType>::Ptr &pcl_points, std::vector<PointStruct> &vec_points) {
-        // 벡터의 크기를 미리 할당하여 메모리 할당을 최소화
+        // allocate memory for vector to minimize memory allocation
         vec_points.clear();
         vec_points.reserve(pcl_points->points.size());
 
-        // 포인트 클라우드 데이터를 PointStruct로 변환하여 벡터에 삽입
+        // convert point cloud data to PointStruct and insert into vector
         for (const auto &pcl_point : pcl_points->points) {
             PointStruct point_struct;
             point_struct.pose = Eigen::Vector3d(pcl_point.x, pcl_point.y, pcl_point.z);
-            point_struct.local = point_struct.pose; // 동일한 값으로 설정
+            point_struct.local = point_struct.pose; // set same value
             point_struct.intensity = pcl_point.intensity;
 
             vec_points.emplace_back(std::move(point_struct));
@@ -343,7 +342,7 @@ private:
     std::mutex mutex_pcl_;
 
     bool b_initializing_status_ = false;
-
+    bool b_get_first_odom_ = false;
     // tbb control
 private:
     std::unique_ptr<tbb::global_control> tbb_control_;

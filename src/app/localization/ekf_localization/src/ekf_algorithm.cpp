@@ -213,10 +213,10 @@ bool EkfAlgorithm::RunPredictionImu(double cur_timestamp, ImuStruct imu_input) {
         return false; // Not new data
     }
 
-    // prediction dt 계산
+    // Calculate prediction dt
     double d_dt = cur_timestamp - prev_timestamp_;
 
-    // dt print
+    // Print dt
     if (cfg_.b_debug_print) {
         if (d_dt > 0.02) {
             std::cout << YELLOW << "[RunPredictionImu] Pred dt ms: " << d_dt * 1000.0 << RESET << std::endl;
@@ -236,7 +236,7 @@ bool EkfAlgorithm::RunPredictionImu(double cur_timestamp, ImuStruct imu_input) {
     Eigen::Quaterniond delta_rot = ExpGyroToQuat(corrected_gyro, d_dt);
     S_.rot = (ekf_state_prev.rot * delta_rot).normalized();
 
-    // Comensate IMU Bias and Gravity
+    // Compensate IMU Bias and Gravity
     Eigen::Vector3d corrected_accel = imu_input.acc - ekf_state_prev.ba;
     Eigen::Vector3d accel_global = G_R_I * corrected_accel - ekf_state_prev.grav;
 
@@ -277,18 +277,18 @@ bool EkfAlgorithm::RunPredictionImu(double cur_timestamp, ImuStruct imu_input) {
 
     // Position partial differentiation
     F.block<3, 3>(S_X, S_VX) = Eigen::Matrix3d::Identity() * d_dt; // ∂pos / ∂vel
-    // F.block<3, 3>(S_X, S_AX) = 0.5 * G_R_I * d_dt * d_dt;     // ∂pos / ∂acc (global transform 포함) // FIXME: 의미 없는 편미분
-    F.block<3, 3>(S_X, S_B_AX) = -0.5 * G_R_I * d_dt * d_dt; // ∂pos / ∂ba (global transform 포함)
+    // F.block<3, 3>(S_X, S_AX) = 0.5 * G_R_I * d_dt * d_dt;     // ∂pos / ∂acc (including global transform) // FIXME: meaningless partial differentiation
+    F.block<3, 3>(S_X, S_B_AX) = -0.5 * G_R_I * d_dt * d_dt; // ∂pos / ∂ba (including global transform)
 
     // Rotation partial differentiation
-    // F.block<3, 3>(S_ROLL, S_ROLL_RATE) =   0.5 * d_dt * Eigen::Matrix3d::Identity(); // d rot / d gyro  // FIXME: 의미 없는 편미분
+    // F.block<3, 3>(S_ROLL, S_ROLL_RATE) =   0.5 * d_dt * Eigen::Matrix3d::Identity(); // d rot / d gyro  // FIXME: meaningless partial differentiation
     F.block<3, 3>(S_ROLL, S_B_ROLL_RATE) = -PartialDerivativeRotWrtGyro(corrected_gyro, d_dt); // d rot / d bg
 
     // Velocity partial differentiation
-    // F.block<3, 3>(S_VX, S_AX) = G_R_I * d_dt;             // ∂vel / ∂acc (global transform 포함) // FIXME: 의미 없는 편미분
-    F.block<3, 3>(S_VX, S_B_AX) = -G_R_I * d_dt; // ∂vel / ∂ba (global transform 포함)
+    // F.block<3, 3>(S_VX, S_AX) = G_R_I * d_dt;             // ∂vel / ∂acc (including global transform) // FIXME: meaningless partial differentiation
+    F.block<3, 3>(S_VX, S_B_AX) = -G_R_I * d_dt; // ∂vel / ∂ba (including global transform)
     F.block<3, 3>(S_ROLL_RATE, S_B_ROLL_RATE) = -Eigen::Matrix3d::Identity(); // ∂gyro / ∂bg
-    F.block<3, 3>(S_AX, S_B_AX) = -G_R_I; // ∂acc / ∂ba (global transform 포함)
+    F.block<3, 3>(S_AX, S_B_AX) = -G_R_I; // ∂acc / ∂ba (including global transform)
 
     if (cfg_.b_imu_estimate_gravity) {
         // Only Z axis
@@ -321,9 +321,9 @@ bool EkfAlgorithm::RunGnssUpdate(EkfGnssMeasurement gnss_input) {
 
     double gnss_dt = gnss_input.timestamp - prev_gnss_.timestamp;
 
-    // PCM Init Pose 로 State 강제 초기화
+    // Force state initialization with PCM Init Pose
     if (gnss_input.gnss_source == GnssSource::PCM_INIT) {
-        // 상태 초기화
+        // State initialization
         S_.pos = gnss_input.pos;
         S_.rot = gnss_input.rot;
         S_.vel.setZero();
@@ -333,15 +333,15 @@ bool EkfAlgorithm::RunGnssUpdate(EkfGnssMeasurement gnss_input) {
         S_.ba.setZero();
         S_.grav = Eigen::Vector3d(0.0, 0.0, cfg_.d_imu_gravity);
 
-        P_ = Eigen::MatrixXd::Identity(STATE_ORDER, STATE_ORDER) * INIT_STATE_COV; // 대각선을 INIT_STATE_COV로 초기화
+        P_ = Eigen::MatrixXd::Identity(STATE_ORDER, STATE_ORDER) * INIT_STATE_COV; // Initialize diagonal with INIT_STATE_COV
 
         std::cout << GREEN << REVERSE << "[RunGnssUpdate] GPS Status Initialized by Init Pose!" << RESET << std::endl;
 
-        // PCM Initialized를 통해 상태를 강제로 변경 했으므로 ekf state가 초기화 된 것으로 간주
+        // Since the state was forcibly changed through PCM Initialized, consider the ekf state initialized
         b_state_initialized_ = true;
         b_yaw_initialized_ = true;
 
-        // 향후 일정 시간동안, pcm update만을 통해 상태 업데이트 (Prediction 미수행)
+        // For a certain period of time, update state only through pcm update (no prediction)
         b_pcm_init_on_going_ = true;
 
         return true;
@@ -352,32 +352,19 @@ bool EkfAlgorithm::RunGnssUpdate(EkfGnssMeasurement gnss_input) {
     CheckRotationStabilized();
     CheckStateStabilized();
 
-    // // EKF 초기화 이전에는 PCM 업데이트 수행하지 않음 (Map matching 발산 위험)
+    // // Do not perform PCM update before EKF initialization (risk of map matching divergence)
     // if (IsStateInitialized() == false && gnss_input.gnss_source == GnssSource::PCM) {
     //     std::cout << YELLOW << "[RunGnssUpdate] GPS Status not initialized for PCM" << RESET << std::endl;
     //     return false;
     // }
 
-    // PCM 초기화 이후 일정 시간동안, PCM Update만 수행하여 EKF 초기화 시도
+    // For a certain period of time after PCM initialization, attempt EKF initialization only through PCM Update
     if (b_pcm_init_on_going_ == true && gnss_input.gnss_source == GnssSource::PCM) {
         if (i_pcm_update_count_ > 10) {
             b_pcm_init_on_going_ = false;
             std::cout << BLUE << REVERSE << "[RunGnssUpdate] PCM Status Initialized!" << RESET << std::endl;
         }
         i_pcm_update_count_++;
-    }
-
-    // GNSS 소스 유형 출력
-    std::string gnss_type;
-    gnss_type = gnss_input.gnss_source == GnssSource::NOVATEL
-                        ? "NOVATEL"
-                        : gnss_input.gnss_source == GnssSource::NAVSATFIX
-                                  ? "NAVSATFIX"
-                                  : gnss_input.gnss_source == GnssSource::PCM ? "PCM" : "";
-
-    if (cfg_.b_debug_print) {
-        std::cout << GREEN << "[RunGnssUpdate] " << gnss_type << " dt: " << gnss_dt * 1000.0 << " ms" << RESET
-                  << std::endl;
     }
 
     // Main Algorithm
@@ -427,10 +414,10 @@ bool EkfAlgorithm::RunGnssUpdate(EkfGnssMeasurement gnss_input) {
     Y.tail<3>() = res_angle_euler;                 // Rotation residual as angle-axis vector
 
     if (gnss_input.gnss_source == GnssSource::NAVSATFIX || gnss_input.gnss_source == GnssSource::BESTPOS) {
-        // 안테나 기준 pose를 제공하는 BESTPOS, NAVSATFIX 특성상, yaw가 잡히지 않으면 calibration 오류가 발생
+        // Due to the nature of BESTPOS, NAVSATFIX providing pose based on antenna, calibration error occurs if yaw is not captured
         if (IsYawInitialized() == false) {
-            R(0, 0) += 3.0; // TODO: 실제 Vehicle to Antenna 오차 반영
-            R(1, 1) += 3.0; // TODO: 실제 Vehicle to Antenna 오차 반영
+            R(0, 0) += 3.0; // TODO: Reflect actual Vehicle to Antenna error
+            R(1, 1) += 3.0; // TODO: Reflect actual Vehicle to Antenna error
         }
 
         Eigen::Matrix<double, 3, STATE_ORDER> H3 = H.block<3, STATE_ORDER>(0, 0);
@@ -453,13 +440,6 @@ bool EkfAlgorithm::RunCanUpdate(CanStruct can_input) {
 
     double can_dt = can_input.timestamp - prev_can_.timestamp;
 
-    // if (IsStateInitialized() == false) {
-    //     // Orientation 초기화 안됐으면 CAN 사용 불가
-    //     std::cout << YELLOW << "[RunCanUpdate] GPS-IMU Not init yet." << RESET << std::endl;
-    //     return false;
-    // }
-
-    // 이전 CAN 과의 시간 간격 유지
     if (fabs(can_dt) < 0.01) {
         return false;
     }
@@ -473,7 +453,7 @@ bool EkfAlgorithm::RunCanUpdate(CanStruct can_input) {
     unbiased_can.gyro.z() -= d_can_yaw_rate_bias_rad_;
     unbiased_can.vel.x() *= cfg_.d_can_vel_scale_factor;
 
-    // CAN 속도를 전역 좌표계로 변환
+    // Convert CAN speed to global coordinate system
     Eigen::Vector3d can_vel_global = S_.rot * unbiased_can.vel;
 
     // Observation matrix: H (only updates local x-velocity and yaw rate)
@@ -523,109 +503,32 @@ bool EkfAlgorithm::RunCanUpdate(CanStruct can_input) {
 
     prev_can_ = unbiased_can; // Update previous CAN data timestamp
 
-    // CAN ZUPT 수행
+    // Perform CAN ZUPT
     ZuptCan(can_input);
 
     return true;
 }
 
-bool EkfAlgorithm::RunBestVelUpdate(BestVelStruct best_vel_input) {
-    std::lock_guard<std::mutex> lock(mutex_state_);
-
-    // Observation matrix: H (vx, vy, vz, yaw)
-    Eigen::Matrix<double, 4, STATE_ORDER> H;
-    H.setZero();
-
-    // 속도와 yaw 관련 H 행렬 설정
-    H(0, S_VX) = 1.0;
-    H(1, S_VY) = 1.0;
-    H(2, S_VZ) = 1.0;
-    H(3, S_YAW) = 1.0;
-
-    // Measurement vector: Z
-    Eigen::Vector4d Z;
-    Eigen::Vector4d Z_state;
-
-    // Convert velocity to local coordinates
-    Eigen::Vector3d vel_local = S_.rot.toRotationMatrix().transpose() * S_.vel;
-    // 후진일 경우 gps velocity 방향 반대로 설정
-    if (vel_local.x() < 0.0) best_vel_input.vel_dir += M_PI;
-
-    // 속도 관련 측정값 설정
-    Z(0) = best_vel_input.hor_vel * cos(best_vel_input.vel_dir);
-    Z(1) = best_vel_input.hor_vel * sin(best_vel_input.vel_dir);
-    Z(2) = best_vel_input.ver_vel;
-    Z(3) = best_vel_input.vel_dir;
-
-    // 상태 벡터 설정
-    Z_state(0) = S_.vel.x();
-    Z_state(1) = S_.vel.y();
-    Z_state(2) = S_.vel.z();
-    Z_state(3) = RotToVec(S_.rot.toRotationMatrix()).z();
-
-    // Measurement covariance matrix: R
-    Eigen::Matrix4d R = Eigen::Matrix4d::Zero();
-
-    // 속도 관련 공분산 설정
-    R(0, 0) = pow(cfg_.d_ekf_bestvel_meas_uncertainty_vel_mps, 2);
-    R(1, 1) = pow(cfg_.d_ekf_bestvel_meas_uncertainty_vel_mps, 2);
-    R(2, 2) = pow(cfg_.d_ekf_bestvel_meas_uncertainty_vel_mps, 2);
-
-    // yaw 공분산을 속도에 따라 지수적으로 설정
-    const double d_base_yaw_uncertainty = 1.0 * M_PI / 180.0; // 기본 yaw 불확실성 (1도)
-    const double d_ref_vel = 3.0;                             // 기준 속도 (m/s)
-
-    // 속도가 5m/s일 때 d_base_yaw_uncertainty가 되고,
-    // 0에 가까울 때는 매우 커지며,
-    // 3m/s 이상에서는 더 작아지도록 설정
-    const double d_yaw_uncertainty =
-            std::min(d_base_yaw_uncertainty * exp(d_ref_vel / std::max(best_vel_input.hor_vel, 0.5)), DBL_MAX);
-
-    // 속도가 너무 작을땐 영향 못주도록
-    if (best_vel_input.hor_vel < 1.0) H(3, S_YAW) = 0.0;
-
-    R(3, 3) = pow(std::min(d_yaw_uncertainty, M_PI), 2); // 최대 불확실성을 π rad로 제한 (inf 방지)
-
-    // std::cout << "BESTVEL YAW STD: " << d_yaw_uncertainty * 180.0 / M_PI << " P: " << sqrt(P_(S_YAW, S_YAW))*180.0 /
-    // M_PI << std::endl;
-
-    // Observation covariance matrix: S
-    Eigen::Matrix4d S = H * P_ * H.transpose() + R;
-
-    // Kalman Gain: K
-    Eigen::Matrix<double, STATE_ORDER, 4> K = P_ * H.transpose() * S.inverse();
-
-    // Residual: Y
-    Eigen::Vector4d Y = Z - Z_state;
-
-    Y(3) = NormAngleRad(Y(3));
-
-    // Update state with Kalman gain
-    UpdateEkfState(K, Y, P_, H, S_);
-
-    return true;
-}
-
 void EkfAlgorithm::ZuptImu(ImuStruct imu_input) {
-    // ZUPT 학습률 설정
+    // Set ZUPT learning rate
 
-    double alpha = 0.01; // Acc bias 업데이트 속도
-    double gamma = 0.01; // Gyro bias 업데이트 속도
+    double alpha = 0.01; // Acc bias update speed
+    double gamma = 0.01; // Gyro bias update speed
 
     double vel_thre = 0.1;
     double gyro_thre = 0.1;
     double acc_thre = 0.1;
 
     Eigen::Vector3d vel_local = S_.rot.inverse() * S_.vel;
-    // vx vy가 작고, 각속도, 가속도 작을때만 수행. vz 는 gps 오차때문에 자주 발생하기에 무시
+    // Perform only when vx vy are small, and angular velocity, acceleration are small. Ignore vz as it often occurs due to GPS error
     if (std::fabs(vel_local.x()) > vel_thre) return;
 
-    // 0.0 이면 1.0, 0.1 이면 0
+    // If 0.0, then 1.0, if 0.1, then 0
     double vel_coeff = (vel_thre - vel_local.head<1>().norm()) / vel_thre * 0.1;
 
-    // 1. 속도 오차(Kinematic): Local vx 가 0 일땐, 나머지도 0
+    // 1. Velocity error (Kinematic): When local vx is 0, the rest are also 0
     Eigen::Vector3d vel_error = -S_.vel;
-    S_.vel += vel_coeff * vel_error; // acc_error를 로컬 기준으로 ba 보정
+    S_.vel += vel_coeff * vel_error; // Correct ba based on acc_error in local
 
     if (cfg_.b_debug_imu_print) {
         std::cout << MAGENTA;
@@ -637,19 +540,19 @@ void EkfAlgorithm::ZuptImu(ImuStruct imu_input) {
     double gyro_coeff = (gyro_thre - S_.gyro.norm()) / gyro_thre * 0.1;
     double acc_coeff = (acc_thre - S_.acc.head<2>().norm()) / acc_thre * 0.1;
 
-    // 2. 각속도 오차: 정지 상태에서 이론적으로 각속도는 0이어야 함
+    // 2. Angular velocity error: Theoretically, angular velocity should be 0 when stationary
     Eigen::Vector3d gyro_error = imu_input.gyro - S_.bg; // Measured gyro - bg
-    S_.bg += gamma * gyro_error;                         // bg를 gyro error 방향으로 보정
+    S_.bg += gamma * gyro_error;                         // Correct bg in the direction of gyro error
 
-    // 3. 가속도 오차: grav를 로컬 좌표계로 변환하여 ba와 비교
-    Eigen::Vector3d grav_local = S_.rot.inverse() * S_.grav; // grav를 로컬 좌표계로 변환
+    // 3. Acceleration error: Convert grav to local coordinate system and compare with ba
+    Eigen::Vector3d grav_local = S_.rot.inverse() * S_.grav; // Convert grav to local coordinate system
     Eigen::Vector3d acc_error_loc = imu_input.acc - (grav_local + S_.ba);
     Eigen::Vector3d acc_error_global = S_.rot * (imu_input.acc - S_.ba) - S_.grav;
 
-    S_.ba += alpha * acc_error_loc;              // acc_error를 로컬 기준으로 ba 보정
-    S_.grav.z() += alpha * acc_error_global.z(); // acc_error를 전역으로 변환해 grav 보정
+    S_.ba += alpha * acc_error_loc;              // Correct ba based on acc_error in local
+    S_.grav.z() += alpha * acc_error_global.z(); // Correct grav by converting acc_error to global
 
-    // 업데이트 후 디버깅 출력 (선택 사항)
+    // Debug output after update (optional)
     if (cfg_.b_debug_imu_print) {
         std::cout << MAGENTA;
         std::cout << "[Zupt] Updated bg: " << S_.bg.transpose() << std::endl;
@@ -666,12 +569,12 @@ void EkfAlgorithm::ZuptCan(CanStruct can_input_) {
         return;
     }
 
-    // ZUPT 학습률 설정
+    // Set ZUPT learning rate
     double d_alpha = 0.05;
 
     d_can_yaw_rate_bias_rad_ = d_alpha * can_input_.gyro.z() + (1.0 - d_alpha) * d_can_yaw_rate_bias_rad_;
 
-    // state 속도 지수가중 업데이트
+    // Exponentially weighted update of state velocity
     S_.vel = (1.0 - d_alpha) * S_.vel;
 
     if (cfg_.b_debug_imu_print) {
@@ -684,92 +587,92 @@ void EkfAlgorithm::ZuptCan(CanStruct can_input_) {
 
 /*
     Complementary Filter:
-    목적: 중력 방향을 추정하여 회전 오차를 보정
-    1. 센서 입력에서 바이어스 추정값 제거
-    2. 원심력 보상
-    3. 중력 방향 추정
-    4. 회전 오차 보정
+    Purpose: Correct rotation error by estimating gravity direction
+    1. Remove bias estimate from sensor input
+    2. Compensate centrifugal force
+    3. Estimate gravity direction
+    4. Correct rotation error
 */
 void EkfAlgorithm::ComplementaryKalmanFilter(ImuStruct imu_input) {
-    // 가속도 크기 검사를 통한 동적 상태 감지
-    const Eigen::Vector3d vec_acc_meas = imu_input.acc - S_.ba; // 바이어스 보정된 가속도
+    // Detect dynamic state through acceleration magnitude check
+    const Eigen::Vector3d vec_acc_meas = imu_input.acc - S_.ba; // Bias-corrected acceleration
 
-    // 원심력 보상
-    // 1. 차량 로컬 프레임에서의 속도 계산
+    // Compensate centrifugal force
+    // 1. Calculate speed in vehicle local frame
     Eigen::Vector3d vel_local = S_.rot.inverse() * S_.vel;
 
-    // 2. 원심력 계산 (a_c = v * ω)
-    // 차량 기준 좌표계에서 원심력은 y축 방향으로 작용
+    // 2. Calculate centrifugal force (a_c = v * ω)
+    // Centrifugal force acts in the y-axis direction in the vehicle coordinate system
     double centripetal_acc = vel_local.x() * S_.gyro.z(); // v * yaw_rate
 
-    // 3. 원심력 보상 벡터 생성 (차량 로컬 프레임)
+    // 3. Create centrifugal compensation vector (vehicle local frame)
     Eigen::Vector3d vec_acc_centrip(0, centripetal_acc, 0);
 
-    // 1. 로컬 가속도 추정 (속도 변화율 기반)
+    // 1. Estimate local acceleration (based on speed change rate)
     static double prev_vel_local_x = vel_local.x();
     static double prev_time = imu_input.timestamp;
 
     double dt = imu_input.timestamp - prev_time;
-    if (dt < 1e-6) return; // 시간차가 너무 작으면 리턴
+    if (dt < 1e-6) return; // Return if time difference is too small
 
-    // 속도 변화율로 가속도 계산 TODO: EKF 초반에 속도가 튀면서 해당값 튐 --> Pitch 오차 발생
+    // Calculate acceleration based on speed change rate TODO: At the beginning of EKF, speed jumps and this value jumps --> Pitch error occurs
     double est_acc_x = (vel_local.x() - prev_vel_local_x) / dt;
     // double est_acc_x = S_.acc.x();
     Eigen::Vector3d est_acc_local = Eigen::Vector3d(est_acc_x, 0, 0);
 
-    // 상태 업데이트
+    // Update state
     prev_vel_local_x = vel_local.x();
     prev_time = imu_input.timestamp;
 
-    // 4. 원심력 보상한 순수 중력 성분
+    // 4. Pure gravity component compensated for centrifugal force
     Eigen::Vector3d compensated_acc = vec_acc_meas - vec_acc_centrip;
 
-    // rotation이 잡히면, 종가감속 보상
+    // If rotation is captured, compensate for longitudinal acceleration
     if (IsRotationStabilized()) {
         compensated_acc -= est_acc_local;
     }
 
-    // 보상된 가속도의 크기 검사
+    // Check the magnitude of the compensated acceleration
     const double d_acc_sensor_magnitude = vec_acc_meas.norm();
     const double d_gravity_magnitude = S_.grav.norm();
     const double d_acc_diff = d_acc_sensor_magnitude - d_gravity_magnitude;
 
-    // 1. 측정값 계산 (z) - 원심력이 보상된 가속도 사용
+    // 1. Calculate measurement value (z) - use compensated acceleration for centrifugal force
     Eigen::Vector3d gravity_direction = compensated_acc.normalized();
-    Eigen::Vector2d z;                                             // roll, pitch 측정값
+    Eigen::Vector2d z;                                             // roll, pitch measurement value
     z << std::atan2(gravity_direction.y(), gravity_direction.z()), // roll
             -std::asin(gravity_direction.x());                     // pitch
 
-    // 2. 현재 상태의 roll, pitch 추출 (h(x))
+    // 2. Extract roll, pitch of current state (h(x))
     Eigen::Vector3d current_rpy = RotToVec(S_.rot.toRotationMatrix());
-    Eigen::Vector2d h_x;     // 현재 상태의 roll, pitch
+    Eigen::Vector2d h_x;     // roll, pitch of current state
     h_x << current_rpy.x(),  // roll
             current_rpy.y(); // pitch
 
-    // 3. Innovation (residual Y) 계산
+    // 3. Calculate Innovation (residual Y)
     Eigen::Vector2d innovation = z - h_x;
 
-    // Roll, pitch는 [-π, π] 범위로 정규화
+    // Normalize roll, pitch to the range [-π, π]
     innovation(0) = NormAngleRad(innovation(0));
     innovation(1) = NormAngleRad(innovation(1));
 
-    // 4. Measurement Jacobian (H) 계산
+    // 4. Calculate Measurement Jacobian (H)
     Eigen::Matrix<double, 2, STATE_ORDER> H = Eigen::Matrix<double, 2, STATE_ORDER>::Zero();
     H(0, S_ROLL) = 1.0;  // ∂roll_meas/∂roll
     H(1, S_PITCH) = 1.0; // ∂pitch_meas/∂pitch
 
-    // 5. Measurement noise covariance (R) 설정
+    // 5. Set Measurement noise covariance (R)
     Eigen::Matrix2d R = Eigen::Matrix2d::Zero();
 
     // double d_base_uncertainty = std::pow(20.0 * cfg_.d_imu_std_acc_mps, 2);
     double d_base_uncertainty = 1.0 * M_PI / 180.0;
 
-    // 상태 초기화 전까진 update 강도 약하게 ( 발산 우려 )
+    // Until the state is initialized, keep the update strength weak (risk of divergence)
     if (IsStateInitialized() == false) d_base_uncertainty = 10.0 * M_PI / 180.0;
 
-    // 동적 상황에 따른 불확실성 증가
-    const double centripetal_uncertainty = std::abs(centripetal_acc) / 9.81 * 10.0; // g 단위로 정규화
-    const double longitudinal_uncertainty = std::abs(est_acc_x) / 9.81 * 10.0;      // g 단위로 정규화
+    // Increase uncertainty according to dynamic situation
+    const double centripetal_uncertainty = std::abs(centripetal_acc) / 9.81 * 10.0; // Normalize in g units
+    const double longitudinal_uncertainty = std::abs(est_acc_x) / 9.81 * 10.0;      // Normalize in g units
     const double acc_diff_uncertainty = std::abs(d_acc_diff) / 9.81 * 10.0;
     const double d_lat_noise_scale = 1.0 + acc_diff_uncertainty + centripetal_uncertainty;
     const double d_longi_noise_scale = 1.0 + acc_diff_uncertainty + longitudinal_uncertainty;

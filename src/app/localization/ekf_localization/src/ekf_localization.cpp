@@ -16,7 +16,6 @@ EkfLocalization::EkfLocalization(std::string node_name, double period)
     update_time_ = ros::Time::now();
     execution_time_ = ros::Duration(0.0);
 
-    // memset(&i_vehicle_can_, 0, sizeof(interface::VehicleCAN));
     ptr_ekf_algorithm_ = std::shared_ptr<EkfAlgorithm>();
     Init();
 }
@@ -50,6 +49,9 @@ void EkfLocalization::Init() {
     if (cfg_.i_gps_type == GpsType::ODOMETRY) {
         // sub_novatel_inspvax_ = nh.subscribe("novatel/oem7/inspvax", 1, &EkfLocalization::CallbackINSPVAX, this);
     }
+    else if (cfg_.i_gps_type == GpsType::BESTPOS) {
+        // sub_bestpos_ = nh.subscribe(cfg_.s_bestpos_topic_name, 1, &EkfLocalization::CallbackBestpos, this);
+    }
     else if (cfg_.i_gps_type == GpsType::NAVSATFIX) {
         sub_navsatfix_ = nh.subscribe(cfg_.s_navsatfix_topic_name, 1, &EkfLocalization::CallbackNavsatFix, this);
     }
@@ -58,10 +60,6 @@ void EkfLocalization::Init() {
     sub_imu_ = nh.subscribe(cfg_.s_imu_topic_name, 1, &EkfLocalization::CallbackImu, this);
     sub_pcm_odom_ = nh.subscribe("/app/loc/pcm_odom", 1, &EkfLocalization::CallbackPcmOdom, this);
     sub_pcm_init_odom_ = nh.subscribe("/app/loc/pcm_init_odom", 1, &EkfLocalization::CallbackPcmInitOdom, this);
-
-    // Publisher init
-    // pub_vehicle_state_ = nh.advertise<autohyu_msgs::VehicleState>("app/loc/vehicle_state", 10);
-    // pub_reference_ = nh.advertise<autohyu_msgs::Reference>("app/loc/reference_point", 10);
 
     pub_ekf_pose_odom_ = nh.advertise<nav_msgs::Odometry>("/app/loc/ekf_pose_odom", 10);
     pub_ekf_ego_marker_ = nh.advertise<visualization_msgs::Marker>("/app/loc/ekf_ego_marker", 1);
@@ -107,10 +105,8 @@ void EkfLocalization::CallbackNavsatFix(const sensor_msgs::NavSatFix::ConstPtr& 
     gnss_meas.pos_cov(1, 1) = std::pow(msg->position_covariance[4], 2); // longitude std
     gnss_meas.pos_cov(2, 2) = std::pow(msg->position_covariance[8], 2); // altitude std
 
-    // 회전 데이터 (NavSatFix에는 기본적으로 포함되지 않음), 단위 quaternion으로 초기화
+    // Rotation data is not included in NavSatFix, initialize with identity quaternion
     gnss_meas.rot = Eigen::Quaterniond::Identity();
-
-    // 회전 불확실성 설정 (기본적으로 0으로 설정)
     gnss_meas.rot_cov.setZero();
 
     // GPS 시각화
@@ -118,11 +114,11 @@ void EkfLocalization::CallbackNavsatFix(const sensor_msgs::NavSatFix::ConstPtr& 
 
     if (cfg_.b_use_gps == false) return;
 
-    // GNSS 불확실성 검증
+    // GNSS uncertainty verification
     if (gnss_meas.pos_cov(0, 0) > cfg_.gnss_uncertainy_max_m || gnss_meas.pos_cov(1, 1) > cfg_.gnss_uncertainy_max_m)
         return;
 
-    // EKF 알고리즘을 이용한 GNSS 업데이트
+    // Update GNSS using EKF algorithm
     if (ptr_ekf_algorithm_->RunGnssUpdate(gnss_meas) == true) {
         UpdateGpsOdom(gnss_meas);
     }
@@ -145,7 +141,7 @@ void EkfLocalization::CallbackImu(const sensor_msgs::Imu::ConstPtr& msg) {
     ProcessINI();
     ImuStruct imu_struct = ImuStructConverter(*msg, cfg_.mat_ego_to_imu_rot, cfg_.vec_ego_to_imu_trans);
     ptr_ekf_algorithm_->RunPredictionImu(imu_struct.timestamp, imu_struct);
-    PublishInThread(); // Imu Prediction 주기마다 출력
+    PublishInThread(); // Output Imu Prediction every period
 }
 
 void EkfLocalization::CallbackPcmOdom(const nav_msgs::Odometry::ConstPtr& msg) {
@@ -208,8 +204,8 @@ void EkfLocalization::CallbackPcmInitOdom(const nav_msgs::Odometry::ConstPtr& ms
 }
 
 void EkfLocalization::Run() {
-    // imu 를 prediction 으로 쓰지 ��으면, ros time을 기준시로 사용하여 Prediction 수행
-    // imu 사용시, Imu call back 때 Prediction 수행
+    // If imu is not used for prediction, use ros time as the reference time for prediction
+    // If imu is used, perform prediction when Imu callback is called
     if (cfg_.b_use_imu == true) return;
 
     double cur_timestamp = ros::Time::now().toSec();
@@ -264,9 +260,6 @@ void EkfLocalization::ProcessINI() {
 
         // Node Configuration
         util_ini_parser_.ParseConfig("common_variable", "projection_mode", cfg_.projection_mode);
-        // util_ini_parser_.ParseConfig("common_variable", "ref_latitude", cfg_.ref_latitude);
-        // util_ini_parser_.ParseConfig("common_variable", "ref_longitude", cfg_.ref_longitude);
-        // util_ini_parser_.ParseConfig("common_variable", "ref_altitude", cfg_.ref_altitude);
 
         // Topic Configuration
         util_ini_parser_.ParseConfig("common_variable", "can_topic_name", cfg_.s_can_topic_name);
@@ -335,7 +328,7 @@ void EkfLocalization::ProcessINI() {
     }
 }
 
-// gnss와 가장 가까운 EKF State를 통해 Interpolation
+// Interpolate the closest EKF State to compensate for the time difference between GNSS and EKF
 bool EkfLocalization::GnssTimeCompensation(const EkfGnssMeasurement& i_gnss, EkfGnssMeasurement& o_gnss) {
     o_gnss = i_gnss;
 
@@ -343,63 +336,62 @@ bool EkfLocalization::GnssTimeCompensation(const EkfGnssMeasurement& i_gnss, Ekf
     {
         std::lock_guard<std::mutex> lock(mutex_ekf_state_deque_);
 
-        // EKF 상태 큐가 비었으면 보정 불가능
+        // If the EKF state queue is empty, compensation is not possible
         if (deq_ekf_state_.empty()) return false;
 
         current_ekf_state = deq_ekf_state_.back();
 
-        // GNSS 시간보다 최신의 EKF 상태만 있는 경우, 보정 불가
+        // If the EKF state queue is empty, compensation is not possible
         if (deq_ekf_state_.front().timestamp > i_gnss.timestamp) return false;
 
-        // GNSS 시간보다 늦은 EKF 상태를 찾음
+        // Find the EKF state that is older than GNSS time
         for (const auto& ekf_state : deq_ekf_state_) {
             if (ekf_state.timestamp > i_gnss.timestamp) {
                 closest_ekf_state = ekf_state;
                 break;
             }
-            closest_ekf_state = ekf_state; // 최신 EKF 상태 업데이트
+            closest_ekf_state = ekf_state; // Update the latest EKF state
         }
     }
 
-    // GNSS 시간과 가장 가까운 EKF 상태와의 시간 ��이 계산
+    // Calculate the time difference between the GNSS time and the closest EKF state
     double d_gnss_to_ekf_time_sec = current_ekf_state.timestamp - i_gnss.timestamp;
 
-    // EKF 시간과 GNSS 시간이 같거나 EKF 시간이 더 과거인 경우, 보정 필요 없음
+    // If the EKF time is the same or older than the GNSS time, no compensation is needed
     if (d_gnss_to_ekf_time_sec <= 0.0) return true;
 
     // 위치 및 회전 보정 변수 초기화
     double dx{0.0}, dy{0.0}, dz{0.0};
     double d_roll{0.0}, d_pitch{0.0}, d_yaw{0.0};
 
-    // closest_ekf_state와 current_ekf_state가 다를 때 보정 수행
+    // Perform compensation if closest_ekf_state and current_ekf_state are different
     if (fabs(current_ekf_state.timestamp - closest_ekf_state.timestamp) > 1e-5) {
         double ratio = d_gnss_to_ekf_time_sec / (current_ekf_state.timestamp - closest_ekf_state.timestamp);
 
-        // EKF 상태 간 상대 변위 계산
+        // Calculate relative displacement between EKF states
         dx = (current_ekf_state.x_m - closest_ekf_state.x_m) * ratio;
         dy = (current_ekf_state.y_m - closest_ekf_state.y_m) * ratio;
         dz = (current_ekf_state.z_m - closest_ekf_state.z_m) * ratio;
 
-        // 회전 각도 차이 계산 (roll, pitch, yaw)
+        // Calculate the difference in rotation angles (roll, pitch, yaw)
         d_roll = AngleDiffRad(closest_ekf_state.roll_rad, current_ekf_state.roll_rad) * ratio;
         d_pitch = AngleDiffRad(closest_ekf_state.pitch_rad, current_ekf_state.pitch_rad) * ratio;
         d_yaw = AngleDiffRad(closest_ekf_state.yaw_rad, current_ekf_state.yaw_rad) * ratio;
     }
 
-    // 상대 변위와 회전 변위를 GNSS에 반영
+    // Reflect relative displacement and rotation difference in GNSS
     o_gnss.timestamp = current_ekf_state.timestamp;
     o_gnss.pos.x() = i_gnss.pos.x() + dx;
     o_gnss.pos.y() = i_gnss.pos.y() + dy;
     o_gnss.pos.z() = i_gnss.pos.z() + dz;
 
-    // Quaternion으로 각도 차이를 반영하여 회전 보정
     Eigen::Quaterniond delta_quaternion = Eigen::AngleAxisd(d_yaw, Eigen::Vector3d::UnitZ()) *
                                           Eigen::AngleAxisd(d_pitch, Eigen::Vector3d::UnitY()) *
                                           Eigen::AngleAxisd(d_roll, Eigen::Vector3d::UnitX());
     o_gnss.rot = i_gnss.rot * delta_quaternion;
     o_gnss.rot.normalize();
 
-    // 디버그 출력
+    // debug print
     if (cfg_.b_debug_print) {
         std::cout.precision(3);
         std::cout << "[GnssTimeCompensation] Time comp: " << d_gnss_to_ekf_time_sec << " Pos: " << dx << " " << dy
@@ -426,7 +418,6 @@ void EkfLocalization::PublishInThread() {
         }
     }
 
-    // GeographicLib를 사용하여 GPSPoint 계산
     GeographicLib::LocalCartesian local_cartesian(cfg_.ref_latitude, cfg_.ref_longitude, cfg_.ref_altitude);
     double lat, lon, ele;
     local_cartesian.Reverse(ego_ekf_state.x_m, ego_ekf_state.y_m, ego_ekf_state.z_m, lat, lon, ele);
@@ -528,13 +519,10 @@ void EkfLocalization::UpdateTF(EgoState ego_ekf_state) {
                               Eigen::AngleAxisd(ego_ekf_state.pitch_rad, Eigen::Vector3d::UnitY()) *
                               Eigen::AngleAxisd(ego_ekf_state.roll_rad, Eigen::Vector3d::UnitX());
 
-    transform.setOrigin(tf::Vector3(ego_ekf_state.x_m, ego_ekf_state.y_m, ego_ekf_state.z_m)); // x, y, z 축 변환값
-    transform.setRotation(tf::Quaternion(quat.x(), quat.y(), quat.z(), quat.w())); // 회전값의 스칼라 부분
+    transform.setOrigin(tf::Vector3(ego_ekf_state.x_m, ego_ekf_state.y_m, ego_ekf_state.z_m));
+    transform.setRotation(tf::Quaternion(quat.x(), quat.y(), quat.z(), quat.w()));
 
-    // 현재 시간으로 TimeStamped 객체 생성
     tf::StampedTransform stampedTransform(transform, ros::Time(ego_ekf_state.timestamp), "world", "ego_frame");
-
-    // TF 송신
     tf_broadcaster_.sendTransform(stampedTransform);
 }
 
@@ -576,45 +564,31 @@ void EkfLocalization::UpdateEkfOdom(EgoState ego_ekf_state) {
 
     pub_ekf_pose_odom_.publish(o_ekf_pose_odom_);
 
-    // // // --- navsatfix ---
-    // sensor_msgs::NavSatFix fix_msgs;
-    // fix_msgs.header.stamp = ros::Time().fromSec(ego_ekf_state.timestamp);
-    // fix_msgs.header.frame_id = "ego_frame";
-    // fix_msgs.latitude = ego_ekf_state.latitude;
-    // fix_msgs.longitude = ego_ekf_state.longitude;
-    // fix_msgs.altitude = ego_ekf_state.height;
-    // pub_satellite_nav_fix_.publish(fix_msgs);
 }
 
 void EkfLocalization::UpdateGpsOdom(EkfGnssMeasurement gnss) {
     nav_msgs::Odometry gps_pose_odom;
 
-    // 헤더 정보 설정
     gps_pose_odom.header.frame_id = "world";
     gps_pose_odom.header.stamp = ros::Time(gnss.timestamp);
 
-    // 위치 설정
     gps_pose_odom.pose.pose.position.x = gnss.pos.x();
     gps_pose_odom.pose.pose.position.y = gnss.pos.y();
     gps_pose_odom.pose.pose.position.z = gnss.pos.z();
 
-    // 쿼터니언 회전 설정
     gps_pose_odom.pose.pose.orientation.x = gnss.rot.x();
     gps_pose_odom.pose.pose.orientation.y = gnss.rot.y();
     gps_pose_odom.pose.pose.orientation.z = gnss.rot.z();
     gps_pose_odom.pose.pose.orientation.w = gnss.rot.w();
 
-    // 위치 공분산 할당
     gps_pose_odom.pose.covariance[0] = gnss.pos_cov(0, 0);  // x covariance
     gps_pose_odom.pose.covariance[7] = gnss.pos_cov(1, 1);  // y covariance
     gps_pose_odom.pose.covariance[14] = gnss.pos_cov(2, 2); // z covariance
 
-    // 회전 공분산 할당
     gps_pose_odom.pose.covariance[21] = gnss.rot_cov(0, 0); // roll covariance
     gps_pose_odom.pose.covariance[28] = gnss.rot_cov(1, 1); // pitch covariance
     gps_pose_odom.pose.covariance[35] = gnss.rot_cov(2, 2); // yaw covariance
 
-    // Odometry 메시지 발행
     o_gps_pose_odom_ = gps_pose_odom;
     pub_gps_pose_odom_.publish(o_gps_pose_odom_);
 }
@@ -647,7 +621,6 @@ void EkfLocalization::UpdateEkfText(const EgoState ego_ekf_state) {
     pub_rviz_ekf_text_.publish(o_rviz_ekf_text_);
 
     // -------------------------------------------------------------------------------------
-    // Plotter2D를 사용한 x, y, vx, vy, ax, ay 시각화
     std_msgs::Float32 x_plot, y_plot, z_plot, vx_plot, vy_plot, vz_plot, ax_plot, ay_plot, az_plot;
     std_msgs::Float32 roll_deg_plot, pitch_deg_plot, yaw_deg_plot;
 
@@ -677,63 +650,6 @@ void EkfLocalization::UpdateEkfText(const EgoState ego_ekf_state) {
     pub_pitch_deg_plot_.publish(pitch_deg_plot);
     pub_yaw_deg_plot_.publish(yaw_deg_plot);
 }
-
-
-// interface::VehicleState EkfLocalization::EkfToVehicleState(const EgoState& ekf_state) {
-//     interface::VehicleState vehicle_state;
-
-//     // Header 초기화 필요시 설정
-//     vehicle_state.header.seq = 0;
-//     vehicle_state.header.stamp = ekf_state.timestamp;
-//     vehicle_state.header.frame_id = "ego_frame";
-
-//     vehicle_state.reference.projection = "local_cartesian";
-//     vehicle_state.reference.wgs84.latitude = cfg_.ref_latitude;
-//     vehicle_state.reference.wgs84.longitude = cfg_.ref_longitude;
-//     vehicle_state.reference.wgs84.altitude = cfg_.ref_altitude;
-
-//     vehicle_state.pos_type = interface::PositionOrVelocityType::INS_RTKFIXED; // TODO:
-
-//     // GNSS 정보 설정
-//     vehicle_state.gnss.latitude = ekf_state.latitude;
-//     vehicle_state.gnss.longitude = ekf_state.longitude;
-//     vehicle_state.gnss.altitude = ekf_state.height;
-
-//     vehicle_state.gnss_stdev.latitude = ekf_state.latitude_std;
-//     vehicle_state.gnss_stdev.longitude = ekf_state.longitude_std;
-//     vehicle_state.gnss_stdev.altitude = ekf_state.height_std;
-
-//     // 위치와 속도 설정 (ENU frame)
-//     vehicle_state.x = ekf_state.x_m;
-//     vehicle_state.y = ekf_state.y_m;
-//     vehicle_state.z = ekf_state.z_m;
-
-//     vehicle_state.vx = ekf_state.vx;
-//     vehicle_state.vy = ekf_state.vy;
-//     vehicle_state.vz = ekf_state.vz;
-
-//     // 가속도 설정 (local coord)
-//     vehicle_state.ax = ekf_state.ax;
-//     vehicle_state.ay = ekf_state.ay;
-//     vehicle_state.az = ekf_state.az;
-
-//     // 회전 각도 설정 (world to vehicle)
-//     vehicle_state.roll = ekf_state.roll_rad;
-//     vehicle_state.pitch = ekf_state.pitch_rad;
-//     vehicle_state.yaw = ekf_state.yaw_rad;
-
-//     // 각속도 설정
-//     vehicle_state.roll_vel = ekf_state.roll_vel;
-//     vehicle_state.pitch_vel = ekf_state.pitch_vel;
-//     vehicle_state.yaw_vel = ekf_state.yaw_vel;
-
-//     // 표준편차 설정
-//     vehicle_state.roll_stdev = sqrt(ekf_state.roll_cov_rad);
-//     vehicle_state.pitch_stdev = sqrt(ekf_state.pitch_cov_rad);
-//     vehicle_state.yaw_stdev = sqrt(ekf_state.yaw_cov_rad);
-
-//     return vehicle_state;
-// }
 
 Eigen::Vector3d EkfLocalization::ProjectGpsPoint(const double& lat, const double& lon, const double& height) {
     GeographicLib::LocalCartesian local_cartesian(cfg_.ref_latitude, cfg_.ref_longitude, cfg_.ref_altitude);

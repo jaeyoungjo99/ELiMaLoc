@@ -2,8 +2,8 @@
  * @file ekf_algorithm.hpp
  * @author Jaeyoung Jo <wodud3743@gmail.com>
  * @brief Extended Kalman Filter for various state estimation
- * @version 0.1
- * @date 2024-10-28
+ * @version 0.2
+ * @date 2024-12-18
  *
  * @copyright Copyright (c) 2024
  */
@@ -88,29 +88,17 @@ public:
     void UpdateDynamicConfig(EkfLocalizationConfig cfg);
 
     // EKF Functions
-
-    // CA 모델을 사용한 prediction
     bool RunPrediction(double cur_timestamp);
 
-    // Imu 측정값을 사용한 prediction
     bool RunPredictionImu(double cur_timestamp, ImuStruct imu_input);
-
-    // Gnss 측정값을 사용한 update
     bool RunGnssUpdate(EkfGnssMeasurement gnss_input);
-
-    // Can 측정값을 사용한 update
     bool RunCanUpdate(CanStruct can_input);
 
-    // BestVel 측정값을 사용한 update
-    bool RunBestVelUpdate(BestVelStruct best_vel_input);
-
-    // state 초기화 상태 확인
     bool IsStateInitialized() const { return b_state_initialized_; }
     bool IsYawInitialized() const { return b_yaw_initialized_; }
     bool IsRotationStabilized() const { return b_rotation_stabilized_; }
     bool IsStateStabilized() const { return b_state_stabilized_; }
 
-    // 현재 state 출력
     EgoState GetCurrentState();
 
     Eigen::Vector3d GetImuCalibration();
@@ -135,7 +123,7 @@ private:
                         const Eigen::Matrix<double, MEAS_SIZE, STATE_ORDER>& H, // 관측 행렬
                         EkfState& X                                             // EKF 상태
     ) {
-        // 상태 업데이트
+        // State update
         Eigen::Matrix<double, STATE_ORDER, 1> state_update = K * Y;
         X.pos += state_update.head<3>(); // Position update
         X.vel += state_update.block<3, 1>(S_VX, 0);
@@ -145,21 +133,21 @@ private:
         X.ba += state_update.block<3, 1>(S_B_AX, 0);
         X.grav += state_update.block<3, 1>(S_G_X, 0);
 
-        // 쿼터니언을 이용한 회전 업데이트
+        // Quaternion to rotation update
         Eigen::Vector3d rot_delta = state_update.segment<3>(3);
         Eigen::Quaterniond quat_delta(Eigen::AngleAxisd(rot_delta.norm(), rot_delta.normalized()));
         X.rot = (X.rot * quat_delta).normalized();
 
-        // 쿼터니언을 이용한 imu 회전
+        // Quaternion to imu rotation
         Eigen::Vector3d imu_rot_delta = state_update.segment<3>(24);
         Eigen::Quaterniond imu_quat_delta(Eigen::AngleAxisd(imu_rot_delta.norm(), imu_rot_delta.normalized()));
         X.imu_rot = (X.imu_rot * imu_quat_delta).normalized();
 
-        // 공분산 행렬 업데이트
+        // Covariance update
         P = P - K * H * P;
     }
 
-private: // 상태 안정화 확인 함수. 상태 변경시 출력문 발행
+private: // state check
     void CheckStateInitialized() {
         if (sqrt(P_(S_ROLL, S_ROLL)) < 5.0 * M_PI / 180.0 && sqrt(P_(S_PITCH, S_PITCH)) < 5.0 * M_PI / 180.0 &&
             sqrt(P_(S_YAW, S_YAW)) < 5.0 * M_PI / 180.0 && sqrt(P_(S_X, S_X)) < 1.0 && sqrt(P_(S_Y, S_Y)) < 1.0) {
@@ -225,20 +213,19 @@ private: // 상태 안정화 확인 함수. 상태 변경시 출력문 발행
 
     void PrintState() {
         std::cout << RESET << "\n----------------------------------------" << std::endl;
-        // std::cout << WHITE << REVERSE << "STATUS" << RESET << std::endl;
 
-        // GNSS 경고 출력
+        // GNSS Warning
         if (prev_timestamp_ - prev_gnss_.timestamp > 1.0) {
             std::cout << YELLOW << "GNSS Not Updated!" << RESET << std::endl;
         }
 
-        // 사용 데이터 세팅 출력 ex: GPS: NavSatFix, CAN: O, PCM: X
+        // Print data setting ex: GPS: NavSatFix, CAN: O, PCM: X
         const char* gps_types[] = {"NavSatFix", "Odometry"};
         std::cout << "GPS: " << (cfg_.b_use_gps ? gps_types[(int)cfg_.i_gps_type] : "X") << ", ";
         std::cout << "CAN: " << (cfg_.b_use_can ? "O" : "X") << ", ";
         std::cout << "PCM: " << (cfg_.b_use_pcm_matching ? "O" : "X") << std::endl;
 
-        // State 초기화 상태 출력
+        // State init print
         if (b_state_initialized_ == false) {
             std::cout << YELLOW << "State Not Initialized!, " << RESET;
         }
@@ -253,7 +240,7 @@ private: // 상태 안정화 확인 함수. 상태 변경시 출력문 발행
             std::cout << GREEN << "State Stabilized" << RESET << std::endl;
         }
 
-        std::cout << std::fixed << std::setprecision(3); // 소수점 아래 3자리 설정
+        std::cout << std::fixed << std::setprecision(3);
         std::cout << "State Std\n"
                   << "X: " << sqrt(P_(S_X, S_X)) << " Y: " << sqrt(P_(S_Y, S_Y)) << " Z: " << sqrt(P_(S_Z, S_Z))
                   << " m \n"
@@ -270,7 +257,7 @@ private: // 상태 안정화 확인 함수. 상태 변경시 출력문 발행
                       << sqrt(P_(S_IMU_YAW, S_IMU_YAW)) * 180.0 / M_PI << " deg" << std::endl;
         }
 
-        std::cout << std::fixed << std::setprecision(6); // 소수점 아래 3자리 설정
+        std::cout << std::fixed << std::setprecision(6);
 
         std::cout << "----------------------------------------" << std::endl;
     }

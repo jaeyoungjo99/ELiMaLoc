@@ -66,7 +66,7 @@
 
 #include "localization_struct.hpp"
 
-// COUT 매크로
+// COUT macros
 #define START_TIMER auto start_time_##__LINE__ = std::chrono::high_resolution_clock::now()
 #define STOP_TIMER(name) std::cout << name << " Time: " \
                                   << GetDurationMs(start_time_##__LINE__) << " ms" << RESET << std::endl
@@ -76,7 +76,7 @@
                                           << GetDurationMs(start_time_##timer_name) << " ms" << RESET << std::endl
 
 
-// cout 색상 표기를 위한 지정
+// cout color
 const std::string RESET = "\033[0m";
 const std::string RED = "\033[31m";     // ERROR
 const std::string GREEN = "\033[32m";   // Update, Correction
@@ -94,9 +94,9 @@ const std::string REVERSE = "\033[7m";
 
 
 /**
- * 시간 측정 함수 (나노초를 밀리초로 변환)
- * @param start_time 시작 시간
- * @return 경과 시간 (밀리초)
+ * Time measurement function (convert nanoseconds to milliseconds)
+ * @param start_time start time
+ * @return elapsed time (milliseconds)
  */
 inline double GetDurationMs(const std::chrono::high_resolution_clock::time_point& start_time) {
     auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -105,9 +105,9 @@ inline double GetDurationMs(const std::chrono::high_resolution_clock::time_point
 }
 
 /**
- * IMU 메시지의 각속도를 ROS 형식으로 변환
- * @param thisImuMsg IMU 메시지
- * @param angular_x,y,z 각 축의 각속도 (출력)
+ * Convert IMU message angular velocity to ROS format
+ * @param thisImuMsg IMU message
+ * @param angular_x,y,z angular velocity of each axis (output)
  */
 template <typename T>
 inline void ImuAngular2RosAngular(sensor_msgs::Imu* thisImuMsg, T* angular_x, T* angular_y, T* angular_z) {
@@ -117,14 +117,13 @@ inline void ImuAngular2RosAngular(sensor_msgs::Imu* thisImuMsg, T* angular_x, T*
 }
 
 /**
- * IMU 데이터를 차량 좌표계로 변환 (회전만 고려)
- * @param imu_in 입력 IMU 메시지
- * @param rotation_calibration ego에서 IMU로의 회전 행렬
- * @return 차량 좌표계 기준 IMU 구조체
+ * Convert IMU data to vehicle coordinate system (only rotation)
+ * @param imu_in input IMU message
+ * @param rotation_calibration ego to IMU rotation matrix
+ * @return ego-based IMU structure
  */
 inline ImuStruct ImuStructConverter(const sensor_msgs::Imu& imu_in, const Eigen::Matrix3d& rotation_calibration) {
     // rotation_calibration 는 ego --> imu
-    // 출력 imu는 ego 기준
 
     ImuStruct imu_out;
     imu_out.timestamp = imu_in.header.stamp.toSec();
@@ -141,58 +140,57 @@ inline ImuStruct ImuStructConverter(const sensor_msgs::Imu& imu_in, const Eigen:
 }
 
 /**
- * IMU 데이터를 차량 좌표계로 변환 (회전과 병진 모두 고려)
- * @param imu_in 입력 IMU 메시지
- * @param rotation_calibration ego에서 IMU로의 회전 행렬
- * @param translation_calibration ego에서 IMU로의 변위 벡터
- * @return 차량 좌표계 기준 IMU 구조체 (원심력 효과 포함)
+ * Convert IMU data to vehicle coordinate system (considering both rotation and translation)
+ * @param imu_in input IMU message
+ * @param rotation_calibration rotation matrix from ego to IMU
+ * @param translation_calibration translation vector from ego to IMU
+ * @return ego-based IMU structure (including centrifugal effects)
  */
 inline ImuStruct ImuStructConverter(const sensor_msgs::Imu& imu_in, 
                                   const Eigen::Matrix3d& rotation_calibration,
                                   const Eigen::Vector3d& translation_calibration) {
     // rotation_calibration: ego --> imu
-    // translation_calibration: ego --> imu (ego 좌표계 기준)
-    // 출력 imu는 ego 기준
+    // translation_calibration: ego --> imu (ego coordinate system)
+    // output imu is ego-based
 
     ImuStruct imu_out;
     imu_out.timestamp = imu_in.header.stamp.toSec();
 
-    // imu --> ego rotation matrix (rotation_calibration의 역행렬)
+    // imu --> ego rotation matrix 
     Eigen::Matrix3d R_imu_to_ego = rotation_calibration;
 
-    // 각속도 변환 (gyro)
+    // gyro
     Eigen::Vector3d gyr(imu_in.angular_velocity.x, imu_in.angular_velocity.y, imu_in.angular_velocity.z);
-    // 회전 변환
+
     gyr = R_imu_to_ego * gyr;
     imu_out.gyro = gyr;
 
-    // 가속도 변환 (acceleration)
+    // acceleration
     Eigen::Vector3d acc(imu_in.linear_acceleration.x, imu_in.linear_acceleration.y, imu_in.linear_acceleration.z);
 
-    // 1. 기본 회전 변환
+    // 1. basic rotation
     acc = R_imu_to_ego * acc;
 
-    // 2. 원심력 효과 추가 (ω × (ω × r))
+    // 2. Add centrifugal effect (ω × (ω × r))
     Eigen::Vector3d centrifugal = gyr.cross(gyr.cross(-translation_calibration));
 
-    // 최종 가속도 = 회전 변환된 가속도 + 원심력
+    // Final acceleration = rotated acceleration + centrifugal force
     imu_out.acc = acc + centrifugal;
 
     return imu_out;
 }
 
 /**
- * IMU 데이터를 ROS 메시지로 변환
- * @param imu_in 입력 IMU 메시지
- * @param rotation_calibration ego에서 IMU로의 회전 행렬
- * @return 변환된 ROS IMU 메시지
+ * Convert IMU data to ROS message
+ * @param imu_in input IMU message
+ * @param rotation_calibration ego to IMU rotation matrix
+ * @return converted ROS IMU message
  */
 inline sensor_msgs::Imu ImuConverterToSensorMsg(const sensor_msgs::Imu& imu_in,
                                               const Eigen::Matrix3d& rotation_calibration) {
     // rotation_calibration 는 ego --> imu
-    // 출력 imu는 ego 기준
 
-    sensor_msgs::Imu imu_out = imu_in; // imu_in의 다른 필드값을 그대로 사용하기 위해 초기화
+    sensor_msgs::Imu imu_out = imu_in; 
 
     // Rotate linear acceleration
     Eigen::Vector3d acc(imu_in.linear_acceleration.x, imu_in.linear_acceleration.y, imu_in.linear_acceleration.z);
@@ -212,11 +210,11 @@ inline sensor_msgs::Imu ImuConverterToSensorMsg(const sensor_msgs::Imu& imu_in,
 }
 
 /**
- * 두 변환 행렬 사이의 보간된 변환 계산
- * @param affine_trans_between 시작과 끝 변환 사이의 변환
- * @param dt_scan 현재 시간과 시작 시간의 차이
- * @param dt_trans 끝 시간과 시작 시간의 차이
- * @return 보간된 변환 행렬
+ * Calculate interpolated transformation between two transformation matrices
+ * @param affine_trans_between start and end transformation
+ * @param dt_scan current time and start time difference
+ * @param dt_trans end time and start time difference
+ * @return interpolated transformation matrix
  */
 inline Eigen::Affine3f InterpolateTfWithTime(const Eigen::Affine3f& affine_trans_between, double dt_scan, double dt_trans) {
     // Check if dt_trans is zero to avoid division by zero
@@ -243,9 +241,9 @@ inline Eigen::Affine3f InterpolateTfWithTime(const Eigen::Affine3f& affine_trans
 }
 
 /**
- * 각도를 0~360도 사이로 정규화
- * @param d_angle_deg 입력 각도(도)
- * @return 정규화된 각도(도)
+ * Normalize angle to 0~360 degrees
+ * @param d_angle_deg input angle (degrees)
+ * @return normalized angle (degrees)
  */
 inline double NormAngleDeg(double d_angle_deg) {
     double d_angle_norm_deg = d_angle_deg;
@@ -258,9 +256,9 @@ inline double NormAngleDeg(double d_angle_deg) {
 }
 
 /**
- * 각도를 -π~π 사이로 정규화
- * @param d_angle_rad 입력 각도(라디안)
- * @return 정규화된 각도(라디안)
+ * Normalize angle to -π~π radians
+ * @param d_angle_rad input angle (radians)
+ * @return normalized angle (radians)
  */
 inline double NormAngleRad(double d_angle_rad) {
     double d_angle_norm_rad = d_angle_rad;
@@ -273,10 +271,10 @@ inline double NormAngleRad(double d_angle_rad) {
 }
 
 /**
- * 두 각도의 차이 계산 (-180~180도 사이)
- * @param d_ref_deg 기준 각도(도)
- * @param d_rel_deg 상대 각도(도)
- * @return 각도 차이(도)
+ * Calculate angle difference (-180~180 degrees)
+ * @param d_ref_deg reference angle (degrees)
+ * @param d_rel_deg relative angle (degrees)
+ * @return angle difference (degrees)
  */
 inline double AngleDiffDeg(double d_ref_deg, double d_rel_deg) {
     double d_angle_diff_deg = d_rel_deg - d_ref_deg;
@@ -289,10 +287,10 @@ inline double AngleDiffDeg(double d_ref_deg, double d_rel_deg) {
 }
 
 /**
- * 두 각도의 차이 계산 (-π~π 사이)
- * @param d_ref_rad 기준 각도(라디안)
- * @param d_rel_rad 상대 각도(라디안)
- * @return 각도 차이(라디안)
+ * Calculate angle difference (-π~π radians)
+ * @param d_ref_rad reference angle (radians)
+ * @param d_rel_rad relative angle (radians)
+ * @return angle difference (radians)
  */
 inline double AngleDiffRad(double d_ref_rad, double d_rel_rad) {
     double d_angle_diff_rad = d_rel_rad - d_ref_rad;
@@ -305,17 +303,17 @@ inline double AngleDiffRad(double d_ref_rad, double d_rel_rad) {
 }
 
 
-// Rotation Matrix를 오일러 각으로 변환 (짐벌락 예방)
+// Rotation Matrix to Euler angles (to avoid gimbal lock)
 /**
- * 회전 행렬을 오일러 각으로 변환 (짐벌락 방지)
- * @param R 3x3 회전 행렬
- * @return roll, pitch, yaw를 포함하는 3차원 벡터
+ * Convert rotation matrix to Euler angles (to avoid gimbal lock)
+ * @param R 3x3 rotation matrix
+ * @return 3D vector containing roll, pitch, yaw
  */
 inline Eigen::Vector3d RotToVec(const Eigen::Matrix3d& R) {
     Eigen::Vector3d angles;
 
-    // 특별한 경우 처리 (gimbal lock 감지)
-    if (std::abs(R(2, 0)) > 0.998) { // gimbal lock이 발생한 경우
+    // Special case handling (to detect gimbal lock)
+    if (std::abs(R(2, 0)) > 0.998) { // gimbal lock occurs
         angles(2) = std::atan2(-R(1, 2), R(1, 1));
         angles(1) = M_PI / 2 * (R(2, 0) >= 0 ? 1 : -1);
         angles(0) = 0;
@@ -326,7 +324,7 @@ inline Eigen::Vector3d RotToVec(const Eigen::Matrix3d& R) {
         angles(2) = std::atan2(R(1, 0) / std::cos(angles(1)), R(0, 0) / std::cos(angles(1)));
     }
 
-    // 각도가 -π에서 π 사이에 있도록 정규화
+    // Normalize angles to be within -π and π
     angles(0) = std::fmod(angles(0) + M_PI, 2 * M_PI) - M_PI;
     angles(1) = std::fmod(angles(1) + M_PI, 2 * M_PI) - M_PI;
     angles(2) = std::fmod(angles(2) + M_PI, 2 * M_PI) - M_PI;
@@ -335,31 +333,35 @@ inline Eigen::Vector3d RotToVec(const Eigen::Matrix3d& R) {
 }
 
 /**
- * 오일러 각을 회전 행렬로 변환
- * @param angles roll, pitch, yaw를 포함하는 3차원 벡터
- * @return 3x3 회전 행렬
+ * Convert Euler angles to rotation matrix
+ * @param angles 3D vector containing roll, pitch, yaw
+ * @return 3x3 rotation matrix
  */
 inline Eigen::Matrix3d VecToRot(const Eigen::Vector3d& angles) {
-    // Eigen::AngleAxisd를 사용하여 회전 행렬 생성
     Eigen::Matrix3d R = (Eigen::AngleAxisd(angles.z(), Eigen::Vector3d::UnitZ()) *
                         Eigen::AngleAxisd(angles.y(), Eigen::Vector3d::UnitY()) *
                         Eigen::AngleAxisd(angles.x(), Eigen::Vector3d::UnitX())).toRotationMatrix();
-
     return R;
 }
 
 
-// 두 쿼터니언 사이의 오일러 각 차이를 계산
+// Calculate angle difference between two quaternions
+/**
+ * Calculate angle difference between two quaternions
+ * @param state_quat state quaternion
+ * @param measurement_quat measurement quaternion
+ * @return angle difference (radians)
+ */
 inline Eigen::Vector3d CalEulerResidualFromQuat(const Eigen::Quaterniond& state_quat,
                                                    const Eigen::Quaterniond& measurement_quat) {
-    // 두 쿼터니언을 정규화하여 회전 행렬로 변환
+    // Normalize quaternions to rotation matrices
     Eigen::Vector3d state_angles = RotToVec(state_quat.normalized().toRotationMatrix());
     Eigen::Vector3d meas_angles = RotToVec(measurement_quat.normalized().toRotationMatrix());
 
-    // 오일러 각 잔차 계산
+    // Calculate Euler angle residual
     Eigen::Vector3d res_euler = meas_angles - state_angles;
 
-    // 각도를 정규화하여 -π와 π 사이로 유지
+    // Normalize angles to be within -π and π
     res_euler.x() = NormAngleRad(res_euler.x());
     res_euler.y() = NormAngleRad(res_euler.y());
     res_euler.z() = NormAngleRad(res_euler.z());
@@ -371,9 +373,9 @@ inline Eigen::Vector3d CalEulerResidualFromQuat(const Eigen::Quaterniond& state_
     Lie Algebra
 */
 /**
- * 벡터를 반대칭 행렬(skew-symmetric matrix)로 변환
- * @param V 3차원 벡터
- * @return 3x3 반대칭 행렬
+ * Convert vector to skew-symmetric matrix
+ * @param V 3D vector
+ * @return 3x3 skew-symmetric matrix
  */
 inline Eigen::Matrix3d SkewSymmetricMatrix(const Eigen::Vector3d& V) {
     Eigen::Matrix3d M;
@@ -384,13 +386,13 @@ inline Eigen::Matrix3d SkewSymmetricMatrix(const Eigen::Vector3d& V) {
 
 // SO(3) non-linear space --> so(3) linear space 
 /**
- * SO(3) 비선형 공간에서 so(3) 선형 공간으로 변환 (로그 매핑)
- * @param R SO(3) 회전 행렬
- * @return so(3) 3차원 벡터
+ * SO(3) non-linear space --> so(3) linear space (log mapping)
+ * @param R SO(3) rotation matrix
+ * @return so(3) 3D vector
  */
 inline Eigen::Vector3d Log(const Eigen::Matrix3d& R) {
     double cos_theta = (R.trace() - 1) / 2.0;
-    cos_theta = std::min(1.0, std::max(-1.0, cos_theta));  // 수치 안정성을 위한 클램핑
+    cos_theta = std::min(1.0, std::max(-1.0, cos_theta));  // Clamping for numerical stability
     double theta = std::acos(cos_theta);
     
     if (std::abs(theta) < 1e-5) {
@@ -401,9 +403,9 @@ inline Eigen::Vector3d Log(const Eigen::Matrix3d& R) {
 }
 
 /**
- * so(3) 선형 공간에서 SO(3) 비선형 공간으로 변환 (지수 매핑)
- * @param omega so(3) 3차원 벡터
- * @return SO(3) 회전 행렬
+ * so(3) linear space --> SO(3) non-linear space (exp mapping)
+ * @param omega so(3) 3D vector
+ * @return SO(3) rotation matrix
  */
 inline Eigen::Matrix3d Exp(const Eigen::Vector3d& omega) {
     double theta = omega.norm();
@@ -417,10 +419,10 @@ inline Eigen::Matrix3d Exp(const Eigen::Vector3d& omega) {
 }
 
 /**
- * 각속도와 시간을 이용한 회전 행렬 변화량 계산
- * @param gyro 각속도 벡터
- * @param d_dt_sec 시간 간격
- * @return 회전 행렬 변화량
+ * Calculate rotation matrix change using angular velocity and time
+ * @param gyro angular velocity vector
+ * @param d_dt_sec time step
+ * @return rotation matrix change
  */
 inline Eigen::Matrix3d ExpGyroToRotMatrix(const Eigen::Vector3d& gyro, double d_dt_sec) {
     Eigen::Vector3d omega = gyro * d_dt_sec; // Angular velocity scaled by time step
@@ -429,15 +431,15 @@ inline Eigen::Matrix3d ExpGyroToRotMatrix(const Eigen::Vector3d& gyro, double d_
 
 
 /**
- * 각속도와 시간을 이용한 쿼터니언 변화량 계산
- * @param gyro 각속도 벡터
- * @param d_dt_sec 시간 간격
- * @return 쿼터니언 변화량
+ * Calculate quaternion change using angular velocity and time
+ * @param gyro angular velocity vector
+ * @param d_dt_sec time step
+ * @return quaternion change
  */
 inline Eigen::Quaterniond ExpGyroToQuat(const Eigen::Vector3d& gyro, double d_dt_sec) {
-    Eigen::Vector3d omega = gyro * d_dt_sec; // 각속도 벡터에 시간 간격 곱하기
-    Eigen::Matrix3d rotation_matrix = Exp(omega); // 기존 Exp 함수 사용
-    return Eigen::Quaterniond(rotation_matrix); // 회전 행렬을 쿼터니언으로 변환
+    Eigen::Vector3d omega = gyro * d_dt_sec; // Angular velocity vector scaled by time step
+    Eigen::Matrix3d rotation_matrix = Exp(omega); // Use the Exp function
+    return Eigen::Quaterniond(rotation_matrix); // Convert rotation matrix to quaternion
 }
 
 /*
@@ -456,22 +458,22 @@ inline Eigen::Quaterniond ExpGyroToQuat(const Eigen::Vector3d& gyro, double d_dt
     - K is the skew-symmetric matrix of ω/θ
 */
 /**
- * 회전에 대한 각속도의 편미분 계산
- * @param gyro 각속도 벡터
- * @param d_dt_sec 시간 간격
- * @return 3x3 자코비안 행렬
+ * Calculate partial derivative of rotation with respect to angular velocity
+ * @param gyro angular velocity vector
+ * @param d_dt_sec time step
+ * @return 3x3 Jacobian matrix
  */
 inline Eigen::Matrix3d PartialDerivativeRotWrtGyro(const Eigen::Vector3d& gyro, double d_dt_sec) {
 
-    Eigen::Vector3d omega = gyro * d_dt_sec; // 각속도 벡터
-    double theta = omega.norm(); // 각속도 총량
+    Eigen::Vector3d omega = gyro * d_dt_sec; // angular velocity vector scaled by time step
+    double theta = omega.norm(); // total angular velocity
 
     if (theta < 1e-5) {
         return Eigen::Matrix3d::Zero(); // Near-zero rotation, derivative is approximately zero
     }
 
-    Eigen::Vector3d axis = omega / theta; // 회전 축 = 각속도 벡터 / 각속도 총량
-    Eigen::Matrix3d K = SkewSymmetricMatrix(axis); // 반대칭 행렬: SO(3) 에서 회전벡터 표현
+    Eigen::Vector3d axis = omega / theta; // rotation axis = angular velocity vector / total angular velocity
+    Eigen::Matrix3d K = SkewSymmetricMatrix(axis); // skew-symmetric matrix: rotation vector representation in SO(3)
     Eigen::Matrix3d partial_derivative = d_dt_sec * 
                                         (Eigen::Matrix3d::Identity() 
                                         + (1 - std::cos(theta)) / (theta * theta) * K 
@@ -481,10 +483,10 @@ inline Eigen::Matrix3d PartialDerivativeRotWrtGyro(const Eigen::Vector3d& gyro, 
 }
 
 /**
- * 전역 좌표계 속도를 로컬 좌표계 속도로 변환
- * @param global_vx,vy,vz 전역 좌표계 속도
- * @param roll_rad,pitch_rad,yaw_rad 현재 자세 각도
- * @param local_vx,vy,vz 로컬 좌표계 속도 (출력)
+ * Convert global velocity to local velocity
+ * @param global_vx,vy,vz global velocity
+ * @param roll_rad,pitch_rad,yaw_rad current pose angles
+ * @param local_vx,vy,vz local velocity (output)
  */
 inline void ConvertGlobalToLocalVelocity(const double global_vx, const double global_vy, const double global_vz,
                                          const double roll_rad, const double pitch_rad, const double yaw_rad,
@@ -511,10 +513,10 @@ inline void ConvertGlobalToLocalVelocity(const double global_vx, const double gl
 }
 
 /**
- * 로컬 좌표계 각속도를 전역 좌표계 각속도로 변환
- * @param local_roll_rate,pitch_rate,yaw_rate 로컬 각속도
- * @param roll_rad,pitch_rad,yaw_rad 현재 자세 각도
- * @param global_roll_rate,pitch_rate,yaw_rate 전역 각속도 (출력)
+ * Convert local angular velocity to global angular velocity
+ * @param local_roll_rate,pitch_rate,yaw_rate local angular velocity
+ * @param roll_rad,pitch_rad,yaw_rad current pose angles
+ * @param global_roll_rate,pitch_rate,yaw_rate global angular velocity (output)
  */
 inline void ConvertLocalToGlobalAngularRate(const double local_roll_rate, const double local_pitch_rate,
                                           const double local_yaw_rate, const double roll_rad,
@@ -528,7 +530,7 @@ inline void ConvertLocalToGlobalAngularRate(const double local_roll_rate, const 
     const double cos_pitch = cos(pitch_rad);
     const double sin_pitch = sin(pitch_rad);
 
-    // 오일러 각속도와 차체 각속도의 관계식
+    // Relationship between Euler angular velocity and vehicle angular velocity
     // [global_roll_rate]   [1    0         -sin_pitch    ] [local_roll_rate ]
     // [global_pitch_rate] = [0  cos_roll   sin_roll*cos_pitch] [local_pitch_rate]
     // [global_yaw_rate  ]   [0 -sin_roll   cos_roll*cos_pitch] [local_yaw_rate  ]
@@ -541,10 +543,10 @@ inline void ConvertLocalToGlobalAngularRate(const double local_roll_rate, const 
 }
 
 /**
- * 전역 좌표계 각속도를 로컬 좌표계 각속도로 변환
- * @param global_roll_rate,pitch_rate,yaw_rate 전역 각속도
- * @param roll_rad,pitch_rad,yaw_rad 현재 자세 각도
- * @param local_roll_rate,pitch_rate,yaw_rate 로컬 각속도 (출력)
+ * Convert global angular velocity to local angular velocity
+ * @param global_roll_rate,pitch_rate,yaw_rate global angular velocity
+ * @param roll_rad,pitch_rad,yaw_rad current pose angles
+ * @param local_roll_rate,pitch_rate,yaw_rate local angular velocity (output)
  */
 inline void ConvertGlobalToLocalAngularRate(const double global_roll_rate, const double global_pitch_rate,
                                           const double global_yaw_rate, const double roll_rad,
@@ -558,19 +560,18 @@ inline void ConvertGlobalToLocalAngularRate(const double global_roll_rate, const
     const double cos_pitch = cos(pitch_rad);
     const double sin_pitch = sin(pitch_rad);
 
-    // 글로벌 각속도를 로컬 각속도로 변환하기 위한 역행렬 계산
+    // Inverse matrix calculation for converting global angular velocity to local angular velocity
     // [local_roll_rate ]   [1    0          -sin_pitch   ]^-1 [global_roll_rate ]
     // [local_pitch_rate] = [0  cos_roll    sin_roll*cos_pitch]^-1 [global_pitch_rate]
     // [local_yaw_rate  ]   [0 -sin_roll    cos_roll*cos_pitch]^-1 [global_yaw_rate  ]
 
-    // 변환 행렬의 행렬식을 이용하여 각속도 변환
     const double det = cos_pitch * cos_roll;
     if (fabs(det) < 1e-6) {
         std::cerr << "Singularity encountered during angular rate conversion!" << std::endl;
         return;
     }
 
-    // 로컬 각속도 계산
+    // local angular velocity calculation
     local_roll_rate =
             global_roll_rate + global_pitch_rate * (sin_roll / cos_pitch) + global_yaw_rate * (-cos_roll / cos_pitch);
 

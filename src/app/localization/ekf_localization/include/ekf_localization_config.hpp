@@ -4,7 +4,7 @@
  *
  * @authors     Jaeyoung Jo (wodud3743@gmail.com)
  *
- * @date        2024-11-08 created by Jaeyoung Jo
+ * @date        2024-12-18 created by Jaeyoung Jo
  *
  */
 
@@ -15,7 +15,7 @@
 // STD Header
 #include <string>
 
-enum class GpsType { NAVSATFIX = 0, ODOMETRY };
+enum class GpsType { NAVSATFIX = 0, BESTPOS, ODOMETRY };
 
 typedef struct {
     // Node

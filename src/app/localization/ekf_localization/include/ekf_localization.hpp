@@ -25,17 +25,6 @@
 // System Header
 #include "ini_parser.h"
 
-// Bridge Header
-// #include "ros_bridge_novatel.hpp"
-// #include "ros_bridge_vehicle_state.hpp"
-
-// Interface Header
-// #include "interface_novatel.hpp"
-// #include "interface_vehicle_state.hpp"
-
-// Util Function Header
-// #include "function_vehicle_state.hpp"
-
 // ROS header
 #include <geometry_msgs/PoseWithCovarianceStamped.h>
 #include <geometry_msgs/TwistStamped.h>
@@ -52,11 +41,6 @@
 // Utility header
 #include <boost/filesystem.hpp>
 
-// #include <lanelet2_core/geometry/LaneletMap.h>
-// #include <lanelet2_core/primitives/Lanelet.h>
-// #include <lanelet2_io/Io.h>
-// #include <lanelet2_projection/LocalCartesian.h>
-// #include <lanelet2_projection/UTM.h>
 
 // Algorithm header
 #include "ekf_algorithm.hpp"
@@ -93,7 +77,6 @@ public:
 
     void CallbackNavsatFix(const sensor_msgs::NavSatFix::ConstPtr& msg);
     void CallbackCAN(const geometry_msgs::TwistStampedConstPtr& msg);
-    // void CallbackVehicleCAN(const autohyu_msgs::VehicleCAN::ConstPtr& msg);
     void CallbackImu(const sensor_msgs::Imu::ConstPtr& msg);
     void CallbackPcmOdom(const nav_msgs::Odometry::ConstPtr& msg);
     void CallbackPcmInitOdom(const nav_msgs::Odometry::ConstPtr& msg);
@@ -104,10 +87,7 @@ public:
     void MainLoop();
 
 private:
-    // ros::Subscriber sub_novatel_inspvax_;
     ros::Subscriber sub_navsatfix_;
-    // ros::Subscriber sub_novatel_bestpos_;
-    // ros::Subscriber sub_novatel_bestvel_;
     ros::Subscriber sub_can_;
     ros::Subscriber sub_imu_;
     ros::Subscriber sub_pcm_odom_;

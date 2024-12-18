@@ -39,8 +39,8 @@
 #include "localization_struct.hpp"
 
 struct CovStruct {
-    Eigen::Matrix3d cov;  // 3x3 공분산 행렬
-    Eigen::Vector3d mean; // 3D 평균 벡터
+    Eigen::Matrix3d cov;  // 3x3 covariance matrix
+    Eigen::Vector3d mean; // 3D mean vector
 
     CovStruct() : cov(Eigen::Matrix3d::Identity()), mean(Eigen::Vector3d::Zero()) {}
 
@@ -62,7 +62,7 @@ struct PointStruct {
 
     double intensity;
 
-    // 생성자
+    // constructor
     PointStruct()
         : pose(Eigen::Vector3d::Zero()),
           local(Eigen::Vector3d::Zero()),
@@ -74,7 +74,7 @@ struct PointStruct {
 
     ~PointStruct(){};
 
-    // reset 함수
+    // reset function
     void reset() {
         pose.setZero();
         local.setZero();
@@ -125,18 +125,15 @@ struct VoxelHashMap {
                 return;
             }
 
-            // 행: 3(x,y,z), 열: 포인트 개수
+            // row: 3(x,y,z), column: number of points
             Eigen::Matrix<double, 3, -1> neighbors(3, n);
 
-            // points 데이터를 neighbors에 복사
             for (int j = 0; j < n; j++) {
                 neighbors.col(j) = points[j].pose;
             }
 
-            // 각 행(축)별로 평균 계산
             Eigen::Vector3d mean = neighbors.rowwise().mean();
 
-            // 평균을 각 열에서 빼고, 공분산 계산
             neighbors.colwise() -= mean;
             Eigen::Matrix3d cov = (neighbors * neighbors.transpose()) / (n - 1);
 
@@ -182,15 +179,15 @@ struct VoxelHashMap {
                                    static_cast<int>(std::floor(point.z() / voxel_size)));
     }
 
-    // 각 voxel에 대한 voxel 내 covariance 계산
+    // calculate covariance for each voxel
     inline void CalVoxelCovAll() {
-        // for (auto &[voxel, voxel_block] : map_) { // 각 복셀 순회
-        //     (void)voxel;                          // 사용하지 않음을 컴파일러에 명시
+        // for (auto &[voxel, voxel_block] : map_) { 
+        //     (void)voxel;                          
         //     voxel_block.CalVoxelCov();
         // }
 
         tbb::parallel_for_each(map_.begin(), map_.end(), [](auto &voxel_pair) {
-            (void)voxel_pair.first; // 사용하지 않음을 컴파일러에 명시
+            (void)voxel_pair.first; 
             voxel_pair.second.CalVoxelCov();
         });
     }
@@ -259,16 +256,16 @@ struct VoxelHashMap {
                                [&](auto &voxel_pair) { ProcessVoxelBlock(voxel_pair.second, d_search_dist_squared); });
     }
 
-    // voxel grid 통해 voxel 내 한 포인트만 남기는 sampling
+    // voxel grid sampling to keep only one point per voxel
     inline std::vector<PointStruct> VoxelDownsample(const std::vector<PointStruct> &points, const double voxel_size) {
-        // Voxel을 키로, 첫 번째 SRadarPoint를 값으로 저장하는 해시맵
+        // voxel as key, first SRadarPoint as value
         std::unordered_map<VoxelHashMap::Voxel, PointStruct, VoxelHashMap::VoxelHash> grid;
         grid.reserve(points.size());
 
-        // 각 SRadarPoint의 pose를 기반으로 Voxel 좌표를 계산한 후, voxel이 없으면 추가
+        // calculate voxel coordinates based on SRadarPoint's pose, then add if not exists
         std::for_each(points.cbegin(), points.cend(), [&](const PointStruct &point) {
             VoxelHashMap::Voxel voxel = VoxelHashMap::PointToVoxel(point.pose, voxel_size);
-            // voxel 내에 이미 point 있으면 skip TODO: 가장 중점이 남도록?
+            // skip if point exists in voxel
             if (grid.find(voxel) == grid.end()) {
                 grid.insert({voxel, point});
             }
@@ -278,7 +275,7 @@ struct VoxelHashMap {
         std::vector<PointStruct> points_downsampled;
         points_downsampled.reserve(grid.size());
 
-        // 해시맵에 있는 SRadarPoint들을 다운샘플링된 결과로 저장
+        // store SRadarPoint in hashmap to downsampled result
         std::for_each(grid.cbegin(), grid.cend(),
                       [&](const auto &voxel_and_point) { points_downsampled.emplace_back(voxel_and_point.second); });
 
@@ -288,11 +285,8 @@ struct VoxelHashMap {
     inline bool FindGroundHeight(const Eigen::Vector2d &position, double &ground_z) const {
         double d_search_range = 5.0;
         double d_squred_search_range = d_search_range * d_search_range;
-        // 1. std::vector<PointStruct> Pointcloud() const; 함수를 사용하여, vec_map_points 를 추출.
         std::vector<PointStruct> vec_map_points = Pointcloud();
 
-        // 2. vec_map_points 에서 x,y 값이 position 으로부터 d_search_range 이내에 있는 포인트 추출. 이때 point가 3개
-        // 이하로만 서치된다면 return false
         std::vector<PointStruct> points_within_range;
         for (const auto &point : vec_map_points) {
             Eigen::Vector2d point_xy(point.pose.x(), point.pose.y());
@@ -301,12 +295,10 @@ struct VoxelHashMap {
             }
         }
 
-        // If less than 3 points are found, return false
         if (points_within_range.size() <= 3) {
             return false;
         }
 
-        // 3. 가장 z가 작은 point N 개 추출.
         constexpr size_t N = 5; // Number of points to use for calculating ground height
         std::partial_sort(points_within_range.begin(),
                           points_within_range.begin() + std::min(N, points_within_range.size()),
@@ -318,7 +310,6 @@ struct VoxelHashMap {
             ground_points.push_back(points_within_range[i].pose);
         }
 
-        // 4. 해당 포인트의 covariance 계산하여 mean z 를 ground_z에 대입.
         Eigen::Matrix<double, 3, -1> neighbor_matrix(3, ground_points.size());
         for (size_t i = 0; i < ground_points.size(); ++i) {
             neighbor_matrix.col(i) = ground_points[i];

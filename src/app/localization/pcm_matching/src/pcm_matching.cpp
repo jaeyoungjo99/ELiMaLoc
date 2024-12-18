@@ -50,7 +50,7 @@ void PcmMatching::Init() {
     pub_icp_map_pc_ = nh.advertise<sensor_msgs::PointCloud2>("/app/loc/icp_map_pc", 1);
     pub_icp_full_map_pc_ = nh.advertise<sensor_msgs::PointCloud2>("/app/loc/icp_full_map_pc", 1);
 
-    // 3. Point Cloud 포인터 초기화
+    // 3. Initialize Point Cloud pointers
     undistort_pcptr_.reset(new pcl::PointCloud<PointType>());
     o_undistort_pcptr_.reset(new pcl::PointCloud<PointType>());
     o_voxel_map_pcptr_.reset(new pcl::PointCloud<PointType>());
@@ -58,7 +58,7 @@ void PcmMatching::Init() {
     o_icp_full_map_pcptr_.reset(new pcl::PointCloud<PointType>());
     i_lidar_pcptr_.reset(new pcl::PointCloud<PointXYZIT>);
 
-    // 4. TBB 스레드 설정
+    // 4. Initialize TBB threads
     int max_num_threads = registration_config_.i_max_thread > 0 ? registration_config_.i_max_thread
                                                                 : tbb::this_task_arena::max_concurrency();
     tbb_control_ = std::make_unique<tbb::global_control>(tbb::global_control::max_allowed_parallelism,
@@ -66,7 +66,7 @@ void PcmMatching::Init() {
     std::cout << "Use Thread  " << max_num_threads << " out of " << tbb::this_task_arena::max_concurrency() << RESET
               << std::endl;
 
-    // 5. PCD 맵 파일 로드
+    // 5. Load PCD map file
     std::string pkg_dir(ros::package::getPath("pcm_matching") + "/../../../../");
     cfg_.pcm_file_path = (pkg_dir + cfg_.pcm_file_path);
     pcl::PointCloud<PointType>::Ptr map_pcptr(new pcl::PointCloud<PointType>());
@@ -78,7 +78,7 @@ void PcmMatching::Init() {
     }
     std::cout << REVERSE << "Loaded " << map_pcptr->width * map_pcptr->height << " map points" << RESET << std::endl;
 
-    // 6. Registration 및 Local Map 초기화
+    // 6. Initialize Registration and Local Map
     registration_.Init(registration_config_);
     std::vector<PointStruct> vec_map_points;
     Pcl2PointStruct(map_pcptr, vec_map_points);
@@ -88,7 +88,7 @@ void PcmMatching::Init() {
     local_map_.AddPoints(vec_map_points);
     std::cout << REVERSE << "[PcmMatching] Add points done" << RESET << std::endl;
 
-    // 7. Covariance 계산
+    // 7. Calculate Covariance
     if (registration_config_.icp_method == IcpMethod::VGICP || registration_config_.icp_method == IcpMethod::AVGICP) {
         std::cout << "[PcmMatching] Start Cal Voxel Cov" << RESET << std::endl;
         local_map_.CalVoxelCovAll();
@@ -100,7 +100,7 @@ void PcmMatching::Init() {
         std::cout << REVERSE << "[PcmMatching] Cal Point Cov done" << RESET << std::endl;
     }
 
-    // 8. 맵 시각화
+    // 8. Visualize map
     std::vector<PointStruct> vec_point_map = local_map_.Pointcloud();
     std::vector<CovStruct> vec_cov_map = local_map_.Covariances();
     PointStruct2Pcl(vec_point_map, o_voxel_map_pcptr_, true);
@@ -153,7 +153,7 @@ void PcmMatching::ProcessINI() {
             std::cout << RED << "[PcmMatching] Invalid Calibration!" << RESET << std::endl;
             ros::shutdown();
         }
-        // ego에서 lidar로의 변환 행렬 생성
+        // create transformation matrix from ego to lidar
         cfg_.tf_ego_to_lidar = Eigen::Matrix4d::Identity();
         cfg_.tf_ego_to_lidar.block<3, 3>(0, 0) = registration_config_.ego_to_lidar_rot;
         cfg_.tf_ego_to_lidar.block<3, 1>(0, 3) = registration_config_.ego_to_lidar_trans;
@@ -207,8 +207,15 @@ void PcmMatching::ProcessINI() {
 void PcmMatching::CallbackPointCloud(const sensor_msgs::PointCloud2::ConstPtr& msg) {
     std::unique_lock<std::mutex> lock(mutex_pcl_, std::try_to_lock);
     if (lock.owns_lock() == false) {
-        // 이 lock이 점유하지 못했다면(다른 process가 i_lidar_pcptr_ 접근중이라면) Registration 수행하지 않음
-        // Initial Pose 우선 원칙
+        // if lock is not owned, skip registration
+        // prioritize initial pose
+        return;
+    }
+    
+    BroadcastStaticTf(msg->header.stamp, msg->header.frame_id, "imu");
+
+    if (b_get_first_odom_ == false) {
+        d_time_scan_end_ = msg->header.stamp.toSec();
         return;
     }
 
@@ -249,11 +256,9 @@ void PcmMatching::CallbackPointCloud(const sensor_msgs::PointCloud2::ConstPtr& m
     // - - - - - - - - - - 2. Find Synced Pose - - - - - - - - - - //
     Eigen::Affine3f sync_ego_affine;
     if (GetInterpolatedPose(d_time_scan_end_, sync_ego_affine) == false) {
-        std::cout << YELLOW << "[PcmMatching] Cannot Find synced pose!" << RESET << std::endl;
         return;
     }
 
-    // source point struct화
     std::vector<PointStruct> vec_src_ori_lidar_points;
     Pcl2PointStruct(undistort_pcptr_, vec_src_ori_lidar_points);
 
@@ -298,7 +303,7 @@ void PcmMatching::CallbackPointCloud(const sensor_msgs::PointCloud2::ConstPtr& m
     // Check Fitness score as success
     cfg_.d_icp_pose_std_m = d_fitness_score;
 
-    // ICP pose 데이터 publish
+    // publish ICP pose data
     Eigen::Matrix4d icp_ego_pose = icp_lidar_pose * cfg_.tf_ego_to_lidar.inverse();
     PublishPcmOdom(icp_ego_pose, ros::Time(d_time_scan_end_), "world");
 
@@ -306,15 +311,17 @@ void PcmMatching::CallbackPointCloud(const sensor_msgs::PointCloud2::ConstPtr& m
         STOP_TIMER_NAMED(total, "[PcmMatching w/o debug]");
     }
 
-    // vec_src_lidar_points 를 world 좌표계로 변환
+
+
+    // transform vec_src_lidar_points to world frame
     registration_.TransformPoints(icp_lidar_pose, vec_src_lidar_points);
     PointStruct2Pcl(vec_src_lidar_points, o_icp_map_pcptr_);
 
-    // vec_src_ori_lidar_points 를 world 좌표계로 변환
+    // transform vec_src_ori_lidar_points to world frame
     registration_.TransformPoints(icp_lidar_pose, vec_src_ori_lidar_points);
     PointStruct2Pcl(vec_src_ori_lidar_points, o_icp_full_map_pcptr_);
 
-    // ICP 결과를 위한 데이터 publish
+    // publish ICP result data
     PublishCloud(pub_icp_map_pc_, o_icp_map_pcptr_, ros::Time(d_time_scan_end_), "world");
     PublishCloud(pub_icp_full_map_pc_, o_icp_full_map_pcptr_, ros::Time(d_time_scan_end_), "world");
 
@@ -326,7 +333,7 @@ void PcmMatching::CallbackPointCloud(const sensor_msgs::PointCloud2::ConstPtr& m
 }
 
 void PcmMatching::CallbackImu(const sensor_msgs::Imu::ConstPtr& msg) {
-    // imu의 측정 값을 ego 기준으로 변환
+    // convert imu measurement to ego frame
     sensor_msgs::Imu thisImu = ImuConverterToSensorMsg(*msg, registration_config_.ego_to_imu_rot);
     std::lock_guard<std::mutex> lock1(mutex_imu_);
     if (deq_imu_.size() > 0) {
@@ -340,28 +347,30 @@ void PcmMatching::CallbackImu(const sensor_msgs::Imu::ConstPtr& msg) {
 void PcmMatching::CallbackEkfState(const nav_msgs::Odometry::ConstPtr& msg) {
     nav_msgs::Odometry this_odom_msg = *msg;
 
-    // 초기화 안된 pose는 받지 않음. 차후 deskewing에 악영향을 줌
+    // do not accept uninitialized pose. it will affect deskewing
     if (fabs(this_odom_msg.pose.pose.position.x) < 1e-9 || fabs(this_odom_msg.pose.pose.position.y) < 1e-9) return;
 
     std::lock_guard<std::mutex> lock2(mutex_odom_);
     if (deq_odom_.size() > 0) {
         if (deq_odom_.back().header.stamp.toSec() > this_odom_msg.header.stamp.toSec()) {
+            std::cout << RED << "[PcmMatching] Odom queue is not in order! Clear queue!" << RESET << std::endl;
             deq_odom_.clear();
         }
     }
     deq_odom_.push_back(this_odom_msg);
+
+    b_get_first_odom_ = true;
 }
 
 void PcmMatching::CallbackInitialPose(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg) {
     std::lock_guard<std::mutex> lock(mutex_pcl_);
     b_initializing_status_ = true;
 
-    // 복사 msg -> pose_stamped
     geometry_msgs::PoseWithCovarianceStamped pose_stamped = *msg;
     nav_msgs::Odometry o_init_pose_odom;
 
-    // pose_stamped에서 pose를 추출하여 Eigen::Matrix4d로 변환
-    // pose_stamped 에는 X, Y, Yaw만 유효함. Map에서 해당 Point의 Z 값을 찾는 과정 필요.
+    // extract pose from pose_stamped and convert to Eigen::Matrix4d
+    // pose_stamped contains X, Y, Yaw only. need to find Z value from map
     Eigen::Matrix4d rviz_pose = Eigen::Matrix4d::Identity();
     rviz_pose.block<3, 3>(0, 0) =
             Eigen::Quaterniond(pose_stamped.pose.pose.orientation.w, pose_stamped.pose.pose.orientation.x,
@@ -381,8 +390,8 @@ void PcmMatching::CallbackInitialPose(const geometry_msgs::PoseWithCovarianceSta
 
     Eigen::Matrix4d ground_pose = rviz_pose;
 
-    // 1. local_map_ 에서 rviz_pose 의 x,y 와 일정 거리 이내에 있는 지면의 높이 구하기. ground_pose에 rviz_pose에 z를
-    // 반영한 값 넣기
+    // 1. get ground height from local_map_ within rviz_pose's x,y and a certain distance
+    // put the value into ground_pose
     double z_ground = 0.0; // Default ground level
     bool found_ground = local_map_.FindGroundHeight(rviz_pose.block<3, 1>(0, 3).head<2>(), z_ground);
     if (found_ground) {
@@ -394,7 +403,8 @@ void PcmMatching::CallbackInitialPose(const geometry_msgs::PoseWithCovarianceSta
         return;
     }
 
-    // 2. ground_pose 를 lidar pose로 바꾼뒤, 초기값으로 하여 ICP 수행. point cloud는 i_lidar_pcptr_ 사용
+    // 2. transform ground_pose to lidar pose and use it as initial value for ICP
+    // use i_lidar_pcptr_ for point cloud
     Eigen::Matrix4d init_lidar_pose = ground_pose * cfg_.tf_ego_to_lidar;
 
     pcl::PointCloud<PointType>::Ptr point_type_lidar(new pcl::PointCloud<PointType>());
@@ -421,7 +431,7 @@ void PcmMatching::CallbackInitialPose(const geometry_msgs::PoseWithCovarianceSta
 
     cfg_.d_icp_pose_std_m = fitness_score;
 
-    // 3. 최종 o_init_pose_odom publish
+    // 3. publish final o_init_pose_odom
     o_init_pose_odom.header.stamp = ros::Time(d_time_scan_end_);
     o_init_pose_odom.header.frame_id = "world";
     o_init_pose_odom.pose.pose.position.x = final_pose(0, 3);
@@ -476,11 +486,11 @@ bool PcmMatching::DeskewPointCloud(const pcl::PointCloud<PointXYZIT>::Ptr& disto
     if (cfg_.b_lidar_scan_time_end == true) {
         double front_time = distort_pcptr->points.front().time;
 
-        d_time_scan_end_ = timestamp;                     // scan end가 대표시간
-        d_time_scan_cur_ = d_time_scan_end_ + front_time; // scan 시작 시간 줄이기. front 가 음수
+        d_time_scan_end_ = timestamp; // scan end is representative time
+        d_time_scan_cur_ = d_time_scan_end_ + front_time; // decrease scan start time. front is negative
 
         for (size_t i = 0; i < distort_pcptr->size(); i++) {
-            distort_pcptr->points[i].time -= front_time; // 포인트 시간에 front 빼서 양수로 만듦
+            distort_pcptr->points[i].time -= front_time; // subtract front from point time to make it positive
         }
     }
 
@@ -533,7 +543,7 @@ void PcmMatching::ImuDeskewInfo() {
     b_is_imu_available_ = false;
 
     while (!deq_imu_.empty()) {
-        // 현재 scan 보다 예전것 지움
+        // remove old imu data compared to current scan
         if (deq_imu_.front().header.stamp.toSec() < d_time_scan_cur_ - 0.01)
             deq_imu_.pop_front();
         else
@@ -551,7 +561,7 @@ void PcmMatching::ImuDeskewInfo() {
         sensor_msgs::Imu thisImuMsg = deq_imu_[i];
         double currentImuTime = thisImuMsg.header.stamp.toSec();
 
-        // imu 시간이 scan + 0.01 이후라면 안씀
+        // if imu time is after scan + 0.01, do not use it
         if (currentImuTime > d_time_scan_end_ + 0.01) break;
 
         if (i_imu_pointer_cur_ == 0) {
@@ -584,9 +594,9 @@ void PcmMatching::ImuDeskewInfo() {
 }
 
 void PcmMatching::OdomDeskewInfo() {
-    b_is_odom_available_ = false; // 초기화
+    b_is_odom_available_ = false; // initialize
 
-    // 현재 scan - 0.1 보다 과거의 odom 제거
+    // remove old odom data compared to current scan
     while (!deq_odom_.empty()) {
         if (deq_odom_.front().header.stamp.toSec() < d_time_scan_cur_ - 0.1)
             deq_odom_.pop_front();
@@ -599,13 +609,12 @@ void PcmMatching::OdomDeskewInfo() {
         std::cout << YELLOW << "[PcmMatching] OdomDeskewInfo: Odom is too old" << RESET << std::endl;
         return;
     }
-    // lidar 시작 ~ 라이다 시작 - 0.1초 사이에 odom 데이터가 없음
+    // odom data is missing between lidar start and current scan - 0.1 seconds
     if (deq_odom_.front().header.stamp.toSec() > d_time_scan_cur_) {
         std::cout << YELLOW << "[PcmMatching] OdomDeskewInfo: Cannot find synced Odom with lidar" << RESET << std::endl;
         return;
     }
 
-    // 1. scan 시작보다 이후이면서 가장작은 odom 값 찾기
     // get start odometry at the beinning of the scan
     nav_msgs::Odometry start_odom_msg;
     for (int i = 0; i < (int)deq_odom_.size(); ++i) {
@@ -626,7 +635,7 @@ void PcmMatching::OdomDeskewInfo() {
             pcl::getTransformation(start_odom_msg.pose.pose.position.x, start_odom_msg.pose.pose.position.y,
                                    start_odom_msg.pose.pose.position.z, roll, pitch, yaw);
 
-    // 2. scan end 이후이면서 가장 작은 odom 값 있으면 trans end 저장, 없으면 velocity로 적분
+    // 2. If there is smallest odom value after scan end, save trans end. Otherwise, integrate with velocity
     nav_msgs::Odometry end_odom_msg;
     if (deq_odom_.back().header.stamp.toSec() > d_time_scan_end_) {
         if (cfg_.b_debug_print) {
@@ -646,7 +655,7 @@ void PcmMatching::OdomDeskewInfo() {
         }
     }
     else {
-        // scan end 보다 이후의 odom 이 없으면 가장 마지막 시간으로부터 속도로 적분해서 사용
+        // if there is no odom after scan end, integrate with velocity from the last time
         nav_msgs::Odometry latest_odom_msg = deq_odom_.back();
         double d_lastest_odom_to_scan_end_sec = d_time_scan_end_ - deq_odom_.back().header.stamp.toSec();
 
@@ -660,28 +669,28 @@ void PcmMatching::OdomDeskewInfo() {
         end_odom_msg.header.frame_id = latest_odom_msg.header.frame_id;
         end_odom_msg.child_frame_id = latest_odom_msg.child_frame_id;
 
-        // 마지막 odom의 orientation에서 roll, pitch, yaw 추출
+        // extract roll, pitch, yaw from the last odom
         double roll, pitch, yaw;
         tf::Quaternion q(latest_odom_msg.pose.pose.orientation.x, latest_odom_msg.pose.pose.orientation.y,
                          latest_odom_msg.pose.pose.orientation.z, latest_odom_msg.pose.pose.orientation.w);
         tf::Matrix3x3(q).getRPY(roll, pitch, yaw);
 
-        // 1. 로컬 속도 추출
+        // extract local velocity
         double vx_local = latest_odom_msg.twist.twist.linear.x;
         double vy_local = latest_odom_msg.twist.twist.linear.y;
         double vz_local = latest_odom_msg.twist.twist.linear.z;
 
-        // 2. Roll, Pitch, Yaw 회전 행렬 생성
+        // create rotation matrix from roll, pitch, yaw
         Eigen::Matrix3d mat_rotation;
         mat_rotation = Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()) *
                        Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitY()) *
                        Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitX());
 
-        // 3. 로컬 속도를 글로벌 속도로 변환
+        // 3. convert local velocity to global velocity
         Eigen::Vector3d local_velocity(vx_local, vy_local, vz_local);
         Eigen::Vector3d global_velocity = mat_rotation * local_velocity;
 
-        // 4. 위치 적분 (글로벌 속도 기반)
+        // 4. integrate position (based on global velocity)
         end_odom_msg.pose.pose.position.x =
                 latest_odom_msg.pose.pose.position.x + global_velocity.x() * d_lastest_odom_to_scan_end_sec;
         end_odom_msg.pose.pose.position.y =
@@ -689,7 +698,7 @@ void PcmMatching::OdomDeskewInfo() {
         end_odom_msg.pose.pose.position.z =
                 latest_odom_msg.pose.pose.position.z + global_velocity.z() * d_lastest_odom_to_scan_end_sec;
 
-        // 5. 각속도를 사용해 roll, pitch, yaw 적분
+        // 5. integrate roll, pitch, yaw using angular velocity
         double roll_vel = latest_odom_msg.twist.twist.angular.x;
         double pitch_vel = latest_odom_msg.twist.twist.angular.y;
         double yaw_vel = latest_odom_msg.twist.twist.angular.z;
@@ -698,7 +707,7 @@ void PcmMatching::OdomDeskewInfo() {
         pitch += pitch_vel * d_lastest_odom_to_scan_end_sec;
         yaw += yaw_vel * d_lastest_odom_to_scan_end_sec;
 
-        // 적분된 roll, pitch, yaw를 쿼터니언으로 변환
+        // convert integrated roll, pitch, yaw to quaternion
         tf::Quaternion updatedQuat;
         updatedQuat.setRPY(roll, pitch, yaw);
         end_odom_msg.pose.pose.orientation.x = updatedQuat.x();
@@ -770,7 +779,7 @@ void PcmMatching::FindPosition(double d_rel_time, float* f_pos_x_cur, float* f_p
 
     float f_ratio = d_rel_time / (d_time_scan_end_ - d_time_scan_cur_); // to d_time_scan_cur_
     // float f_ratio = -(d_time_scan_end_ - d_time_scan_cur_ - d_rel_time) / (d_time_scan_end_ - d_time_scan_cur_);
-    // to d_time_scan_end_. f_ratio는 음수가 됨
+    // to d_time_scan_end_. f_ratio is negative
 
     *f_pos_x_cur = f_ratio * f_odom_incre_x_;
     *f_pos_y_cur = f_ratio * f_odom_incre_y_;
@@ -829,7 +838,7 @@ void PcmMatching::SortEigenvaluesAndEigenvectors(Eigen::Vector3d& vec_eigenvalue
         vec_pairs.emplace_back(vec_eigenvalues(i), mat_eigenvectors.col(i));
     }
 
-    // Eigenvalue 크기에 따라 정렬 (내림차순)
+    // sort eigenvalues in descending order
     std::sort(vec_pairs.begin(), vec_pairs.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
 
     for (int i = 0; i < 3; ++i) {
@@ -837,7 +846,7 @@ void PcmMatching::SortEigenvaluesAndEigenvectors(Eigen::Vector3d& vec_eigenvalue
         mat_eigenvectors.col(i) = vec_pairs[i].second;
     }
 
-    // 회전 행렬의 유효성 검사 (determinant가 1인지 확인)
+    // check validity of rotation matrix (determinant is 1)
     if (mat_eigenvectors.determinant() < 0) {
         mat_eigenvectors.col(0) = -mat_eigenvectors.col(0);
     }
@@ -859,43 +868,41 @@ void PcmMatching::VisualizeCovMap(ros::Publisher& marker_pub, const std::vector<
         marker.type = visualization_msgs::Marker::CYLINDER;
         marker.action = visualization_msgs::Marker::ADD;
 
-        // 공분산 행렬을 분석하여 Eigenvalue와 Eigenvector 계산
+        // analyze covariance matrix to calculate eigenvalues and eigenvectors
         Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eig_solver(cov_data.cov);
         Eigen::Vector3d eigenvalues = eig_solver.eigenvalues();
         Eigen::Matrix3d eigenvectors = eig_solver.eigenvectors();
 
-        // Eigenvalue와 Eigenvector를 크기순으로 정렬
+        // sort eigenvalues and eigenvectors in descending order
         SortEigenvaluesAndEigenvectors(eigenvalues, eigenvectors);
 
-        // Orientation을 설정하기 위해 Eigenvector를 Quaternion으로 변환
+        // set orientation by converting eigenvector to quaternion
         Eigen::Quaterniond quat(eigenvectors);
         marker.pose.orientation.x = quat.x();
         marker.pose.orientation.y = quat.y();
         marker.pose.orientation.z = quat.z();
         marker.pose.orientation.w = quat.w();
 
-        // 공분산의 중심 위치 설정
+        // set center position of covariance
         marker.pose.position.x = cov_data.mean(0);
         marker.pose.position.y = cov_data.mean(1);
         marker.pose.position.z = cov_data.mean(2);
 
-        // Cylinder의 크기 설정 (가장 큰 eigenvalue를 높이로 사용)
-        marker.scale.x = 3.0 * sqrt(eigenvalues(0) + 0.01); // x축 (주방향의 크기)
-        marker.scale.y = 3.0 * sqrt(eigenvalues(1) + 0.01); // y축 (중간 크기)
-        marker.scale.z = 3.0 * sqrt(eigenvalues(2) + 0.01); // z축 (Cylinder의 높이)
+        // set size of cylinder (use largest eigenvalue as height)
+        marker.scale.x = 3.0 * sqrt(eigenvalues(0) + 0.01); // x-axis (size of main direction)
+        marker.scale.y = 3.0 * sqrt(eigenvalues(1) + 0.01); // y-axis (middle size)
+        marker.scale.z = 3.0 * sqrt(eigenvalues(2) + 0.01); // z-axis (height of cylinder)
 
-        // 색상 설정 (Eigenvector 방향에 따라 색상 달리)
-        Eigen::Vector3d main_axis = eigenvectors.col(2); // 주축 (가장 큰 Eigenvalue에 해당하는 Eigenvector)
-        marker.color.r = fabs(main_axis(0));             // X축 방향 성분을 빨강색에 반영
-        marker.color.g = fabs(main_axis(1));             // Y축 방향 성분을 녹색에 반영
-        marker.color.b = fabs(main_axis(2));             // Z축 방향 성분을 파랑색에 반영
-        marker.color.a = 0.5;                            // 투명도
+        // set color (different color for each eigenvector)
+        Eigen::Vector3d main_axis = eigenvectors.col(2); // main axis (eigenvector corresponding to largest eigenvalue)
+        marker.color.r = fabs(main_axis(0));             // reflect X-axis component to red
+        marker.color.g = fabs(main_axis(1));             // reflect Y-axis component to green
+        marker.color.b = fabs(main_axis(2));             // reflect Z-axis component to blue
+        marker.color.a = 0.5;                            // transparency
 
-        // MarkerArray에 추가
         marker_array.markers.push_back(marker);
     }
 
-    // MarkerArray를 퍼블리시
     marker_pub.publish(marker_array);
 }
 
@@ -931,13 +938,13 @@ pcl::PointCloud<PointXYZIT> PcmMatching::Cloudmsg2cloud(sensor_msgs::PointCloud2
     return cloudresult;
 }
 
-// deq_odom_ 에서 d_cur_time 에 맞는 시간을 interpolation 하여 찾아내는 함수
+// find interpolated pose in deq_odom_ at d_cur_time
 bool PcmMatching::GetInterpolatedPose(double d_cur_time, Eigen::Affine3f& o_transform) {
-    // 이전과 이후의 메시지를 찾기 위한 변수
+    // variables to find previous and next message
     nav_msgs::Odometry odom_before, odom_after;
     bool b_found_before = false, b_found_after = false;
 
-    // 이전 메시지와 이후 메시지 찾기
+    // find previous and next message
     for (size_t i = 0; i < deq_odom_.size(); ++i) {
         if (deq_odom_[i].header.stamp.toSec() <= d_cur_time) {
             odom_before = deq_odom_[i];
@@ -946,29 +953,83 @@ bool PcmMatching::GetInterpolatedPose(double d_cur_time, Eigen::Affine3f& o_tran
         if (deq_odom_[i].header.stamp.toSec() > d_cur_time) {
             odom_after = deq_odom_[i];
             b_found_after = true;
-            break; // 이전과 이후 메시지를 모두 찾으면 루프 종료
+            break; // stop loop if both previous and next message are found
         }
     }
 
-    // 이전 또는 이후 메시지를 찾지 못했으면 기본 변환 행렬 반환
-    if (!b_found_before || !b_found_after) {
+    // return default transformation matrix if previous or next message is not found
+    if (!b_found_before) {
         std::cout << YELLOW << "odom last to scan cur time: " << d_cur_time - deq_odom_.back().header.stamp.toSec()
                   << RESET << std::endl;
-        std::cout.precision(20);
-        std::cout << YELLOW << "d_cur_time: " << d_cur_time << " Odom: " << deq_odom_.back().header.stamp.toSec()
-                  << RESET << std::endl;
+        // std::cout.precision(20);
+        // std::cout << YELLOW << "d_cur_time: " << d_cur_time << " Odom: " << deq_odom_.back().header.stamp.toSec()
+        //           << RESET << std::endl;
+
+        std::cout << YELLOW << "[GetInterpolatedPose] Pose before not exist!" << RESET << std::endl;
         return false;
+    } else if (b_found_before && !b_found_after) {
+        std::cout << YELLOW << "[GetInterpolatedPose] odom last to scan cur time: " << d_cur_time - deq_odom_.back().header.stamp.toSec()
+                  << RESET << std::endl;
+
+        nav_msgs::Odometry latest_odom_msg = deq_odom_.back();
+        double d_lastest_odom_to_scan_end_sec = d_cur_time - deq_odom_.back().header.stamp.toSec();
+
+        // extract roll, pitch, yaw from the last odom
+        double roll, pitch, yaw;
+        tf::Quaternion q(latest_odom_msg.pose.pose.orientation.x, latest_odom_msg.pose.pose.orientation.y,
+                         latest_odom_msg.pose.pose.orientation.z, latest_odom_msg.pose.pose.orientation.w);
+        tf::Matrix3x3(q).getRPY(roll, pitch, yaw);
+
+        // extract local velocity
+        double vx_local = latest_odom_msg.twist.twist.linear.x;
+        double vy_local = latest_odom_msg.twist.twist.linear.y;
+        double vz_local = latest_odom_msg.twist.twist.linear.z;
+
+        // create rotation matrix from roll, pitch, yaw
+        Eigen::Matrix3d mat_rotation;
+        mat_rotation = Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()) *
+                       Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitY()) *
+                       Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitX());
+
+        // 3. convert local velocity to global velocity
+        Eigen::Vector3d local_velocity(vx_local, vy_local, vz_local);
+        Eigen::Vector3d global_velocity = mat_rotation * local_velocity;
+
+        // 4. integrate position (based on global velocity)
+        odom_after.pose.pose.position.x =
+                latest_odom_msg.pose.pose.position.x + global_velocity.x() * d_lastest_odom_to_scan_end_sec;
+        odom_after.pose.pose.position.y =
+                latest_odom_msg.pose.pose.position.y + global_velocity.y() * d_lastest_odom_to_scan_end_sec;
+        odom_after.pose.pose.position.z =
+                latest_odom_msg.pose.pose.position.z + global_velocity.z() * d_lastest_odom_to_scan_end_sec;
+
+        // 5. integrate roll, pitch, yaw using angular velocity
+        double roll_vel = latest_odom_msg.twist.twist.angular.x;
+        double pitch_vel = latest_odom_msg.twist.twist.angular.y;
+        double yaw_vel = latest_odom_msg.twist.twist.angular.z;
+
+        roll += roll_vel * d_lastest_odom_to_scan_end_sec;
+        pitch += pitch_vel * d_lastest_odom_to_scan_end_sec;
+        yaw += yaw_vel * d_lastest_odom_to_scan_end_sec;
+
+        // convert integrated roll, pitch, yaw to quaternion
+        tf::Quaternion updatedQuat;
+        updatedQuat.setRPY(roll, pitch, yaw);
+        odom_after.pose.pose.orientation.x = updatedQuat.x();
+        odom_after.pose.pose.orientation.y = updatedQuat.y();
+        odom_after.pose.pose.orientation.z = updatedQuat.z();
+        odom_after.pose.pose.orientation.w = updatedQuat.w();
     }
 
-    // 이전, 이후 odometry 시간 계산
+    // calculate time of previous and next odometry
     double d_time_before = odom_before.header.stamp.toSec();
     double d_time_after = odom_after.header.stamp.toSec();
 
-    // 시간 차이 계산
+    // calculate time difference
     double dt_scan = d_cur_time - d_time_before;
     double dt_trans = d_time_after - d_time_before;
 
-    // Odometry 메시지에서 변환 행렬로 변환 (Eigen::Affine3f)
+    // convert odometry message to transformation matrix (Eigen::Affine3f)
     Eigen::Affine3f affine_pose_before = Eigen::Affine3f::Identity();
     affine_pose_before.translation() << odom_before.pose.pose.position.x, odom_before.pose.pose.position.y,
             odom_before.pose.pose.position.z;
@@ -983,13 +1044,13 @@ bool PcmMatching::GetInterpolatedPose(double d_cur_time, Eigen::Affine3f& o_tran
                                  odom_after.pose.pose.orientation.y, odom_after.pose.pose.orientation.z);
     poseAfter.rotate(quatAfter);
 
-    // 이전 상태에서 이후 상태로의 변환 계산
+    // calculate transformation from previous state to next state
     Eigen::Affine3f affine_trans_between = affine_pose_before.inverse() * poseAfter;
 
-    // 보간을 통해 변환 계산
+    // calculate transformation by interpolation
     Eigen::Affine3f affine_interpolated_pose = InterpolateTfWithTime(affine_trans_between, dt_scan, dt_trans);
 
-    // 최종 보간된 변환 행렬을 반환
+    // return final interpolated transformation matrix
     o_transform = affine_pose_before * affine_interpolated_pose;
     return true;
 }
@@ -1000,19 +1061,19 @@ void PcmMatching::PublishPcmOdom(Eigen::Matrix4d icp_ego_pose, ros::Time thisSta
     pcm_pose_odom.header.frame_id = thisFrame;
     pcm_pose_odom.header.stamp = thisStamp;
 
-    // 위치 정보 추출
+    // extract position information
     Eigen::Vector3d position = icp_ego_pose.block<3, 1>(0, 3);
 
     pcm_pose_odom.pose.pose.position.x = position.x();
     pcm_pose_odom.pose.pose.position.y = position.y();
     pcm_pose_odom.pose.pose.position.z = position.z();
 
-    // 회전 정보 추출
+    // extract rotation information
     Eigen::Matrix3d rotation_matrix = icp_ego_pose.block<3, 3>(0, 0);
 
     Eigen::Vector3d euler_angles = RotToVec(rotation_matrix);
 
-    // 쿼터니언으로 변환
+    // convert to quaternion
     Eigen::Quaterniond quat(rotation_matrix);
 
     pcm_pose_odom.pose.pose.orientation.x = quat.x();
@@ -1021,12 +1082,12 @@ void PcmMatching::PublishPcmOdom(Eigen::Matrix4d icp_ego_pose, ros::Time thisSta
     pcm_pose_odom.pose.pose.orientation.w = quat.w();
 
     /*
-        ICP Covariance 계산
+        ICP Covariance Calculation
 
-        icp JtJ 함수의 inverse 인 icp_local_cov_ 사용.
-        1. Translation 과 Rotation을 별도로 계산
-        2. Covariance의 대각 행렬중 최솟값을 기준으로 matrix 나머지 원소 정규화
-        3. Translation은 정규화 매트릭스에 d_icp_pose_std_m 곱하고 Rotation은 angle_std를 곱함
+        Using icp_local_cov_ which is inverse of ICP JtJ function.
+        1. Calculate Translation and Rotation separately
+        2. Normalize remaining matrix elements based on minimum value of diagonal matrix of Covariance
+        3. Multiply d_icp_pose_std_m to normalized matrix for Translation and angle_std for Rotation
     */
 
     double d_icp_pose_std_m = std::max(cfg_.d_icp_pose_std_m, 0.25);
@@ -1040,7 +1101,7 @@ void PcmMatching::PublishPcmOdom(Eigen::Matrix4d icp_ego_pose, ros::Time thisSta
     Eigen::Matrix3d rotation_covariance = icp_local_cov_.block<3, 3>(3, 3);
     Eigen::Vector3d rotation_cov_norm = NormalizeDiagonalCovariance(rotation_covariance);
 
-    double angle_std = d_icp_pose_std_m * M_PI / 180.0; // 라디안 단위
+    double angle_std = d_icp_pose_std_m * M_PI / 180.0; 
 
     Eigen::Matrix3d translation_cov_norm_mat =
             NormalizeCovariance(translation_covariance) * d_icp_pose_std_m * d_icp_pose_std_m;
@@ -1049,6 +1110,45 @@ void PcmMatching::PublishPcmOdom(Eigen::Matrix4d icp_ego_pose, ros::Time thisSta
 
     pub_pcm_odom_.publish(pcm_pose_odom);
 }
+
+void PcmMatching::BroadcastStaticTf(ros::Time thisStamp, std::string lidarFrame, std::string imuFrame) {
+    static tf2_ros::StaticTransformBroadcaster static_broadcaster;
+    geometry_msgs::TransformStamped static_transform_stamped;
+
+    // Set header
+    static_transform_stamped.header.stamp = thisStamp;
+    static_transform_stamped.header.frame_id = "ego_frame"; // ego frame
+    static_transform_stamped.child_frame_id = lidarFrame; // lidar frame
+
+    // Set translation
+    static_transform_stamped.transform.translation.x = registration_config_.ego_to_lidar_trans.x();
+    static_transform_stamped.transform.translation.y = registration_config_.ego_to_lidar_trans.y();
+    static_transform_stamped.transform.translation.z = registration_config_.ego_to_lidar_trans.z();
+
+    // Set rotation
+    Eigen::Quaterniond quat_lidar(registration_config_.ego_to_lidar_rot);
+    static_transform_stamped.transform.rotation.x = quat_lidar.x();
+    static_transform_stamped.transform.rotation.y = quat_lidar.y();
+    static_transform_stamped.transform.rotation.z = quat_lidar.z();
+    static_transform_stamped.transform.rotation.w = quat_lidar.w();
+
+    // Broadcast the transform
+    static_broadcaster.sendTransform(static_transform_stamped);
+
+    // Repeat for IMU
+    static_transform_stamped.child_frame_id = imuFrame; // imu frame
+
+    // Set rotation for IMU
+    Eigen::Quaterniond quat_imu(registration_config_.ego_to_imu_rot);
+    static_transform_stamped.transform.rotation.x = quat_imu.x();
+    static_transform_stamped.transform.rotation.y = quat_imu.y();
+    static_transform_stamped.transform.rotation.z = quat_imu.z();
+    static_transform_stamped.transform.rotation.w = quat_imu.w();
+
+    // Broadcast the transform
+    static_broadcaster.sendTransform(static_transform_stamped);
+}
+
 
 void PcmMatching::Exec(int num_thread) {
     boost::thread main_thread(boost::bind(&PcmMatching::MainLoop, this));
@@ -1101,7 +1201,7 @@ int main(int argc, char** argv) {
     }
 
     PcmMatching main_task(node_name, period);
-    main_task.Exec(5); // 5개의 callback 함수 사용
+    main_task.Exec(5); // use 5 callback functions
 
     return 0;
 }
