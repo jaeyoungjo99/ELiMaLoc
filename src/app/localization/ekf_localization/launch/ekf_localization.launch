@@ -1,23 +1,12 @@
 <!-- -->
 <launch>
     <arg name="location"    default="kcity"/>
-    <arg name="mode"        default="real"/>
     <arg name="bag"         default="false"/>
   
-    <!-- Grandpark -->
-    <arg name="ref_lat_grandpark" default="37.43461132" />
-    <arg name="ref_lon_grandpark" default="127.00669974" />
-    <arg name="ref_hgt_grandpark" default="0.0" />
-
     <!-- KATRI & KCity -->
     <arg name="ref_lat_katri" default="37.23855064" />
     <arg name="ref_lon_katri" default="126.77253029" />
     <arg name="ref_hgt_katri" default="0.0" />
-
-    <!-- Midan -->
-    <arg name="ref_lat_midan" default="37.52588" />
-    <arg name="ref_lon_midan" default="126.5222" />
-    <arg name="ref_hgt_midan" default="8.0" />
 
     <!-- Pangyo Station -->
     <arg name="ref_lat_pangyo" default="37.394776" />
@@ -30,25 +19,13 @@
     <arg name="ref_hgt_hanyang" default="66.0" />
 
     <param name="/use_sim_time" value="$(arg bag)"/>
-    <rosparam file="config/rosparam_system.yaml"    command="load"/>
     <node pkg="ekf_localization" type="ekf_localization" name="ekf_localization" output="screen">
         <param name="location"  value="$(arg location)"/>
-        <param name="mode"      value="$(arg mode)"/>   
-
-        <!-- Grandpark -->
-        <param name="ref_latitude" value="$(arg ref_lat_grandpark)" if="$(eval location=='grandpark')"/>
-        <param name="ref_longitude" value="$(arg ref_lon_grandpark)" if="$(eval location=='grandpark')"/>
-        <param name="ref_height" value="$(arg ref_hgt_grandpark)" if="$(eval location=='grandpark')"/>
 
         <!-- KCity/KATRI -->
         <param name="ref_latitude" value="$(arg ref_lat_katri)" if="$(eval location=='kcity' or location=='katri')"/>
         <param name="ref_longitude" value="$(arg ref_lon_katri)" if="$(eval location=='kcity' or location=='katri')"/>
         <param name="ref_height" value="$(arg ref_hgt_katri)" if="$(eval location=='kcity' or location=='katri')"/>
-
-        <!-- Midan -->
-        <param name="ref_latitude" value="$(arg ref_lat_midan)" if="$(eval location=='midan' or location=='midan')"/>
-        <param name="ref_longitude" value="$(arg ref_lon_midan)" if="$(eval location=='midan' or location=='midan')"/>
-        <param name="ref_height" value="$(arg ref_hgt_midan)" if="$(eval location=='midan' or location=='midan')"/>
 
         <!-- Pangyo Station -->
         <param name="ref_latitude" value="$(arg ref_lat_pangyo)" if="$(eval location=='pangyo')"/>

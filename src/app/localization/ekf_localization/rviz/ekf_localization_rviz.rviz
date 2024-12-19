@@ -6,9 +6,7 @@ Panels:
       Expanded:
         - /Global Options1
         - /Status1
-        - /EgoEkf Grid1
         - /EgoEkf Grid1/Status1
-        - /TFTrajectory1
         - /TF1/Frames1
         - /EKF1/GPS Pose Odom1/Shape1
         - /EKF1/GPS Pose Odom1/Covariance1/Position1
@@ -95,7 +93,7 @@ Visualization Manager:
       Name: TFTrajectory
       Value: true
       color: 25; 255; 240
-      duration: 10
+      duration: 20
       frame: ego_frame
       line_width: 0.029999999329447746
     - Class: rviz/TF
@@ -120,12 +118,13 @@ Visualization Manager:
       Show Axes: true
       Show Names: true
       Tree:
+        ego_frame:
+          imu:
+            {}
+          velodyne:
+            {}
         world:
-          ego_frame:
-            imu:
-              {}
-            velodyne:
-              {}
+          {}
       Update Interval: 0
       Value: true
     - Class: rviz/Group
@@ -240,7 +239,7 @@ Visualization Manager:
           Marker Topic: /app/loc/ekf_ego_marker
           Name: EgoEkfMarker
           Namespaces:
-            "": true
+            {}
           Queue Size: 100
           Value: true
         - Class: rviz/Marker
@@ -744,7 +743,7 @@ Visualization Manager:
           Color: 255; 255; 255
           Color Transformer: Intensity
           Decay Time: 0
-          Enabled: false
+          Enabled: true
           Invert Rainbow: false
           Max Color: 255; 255; 255
           Min Color: 0; 0; 0
@@ -759,7 +758,7 @@ Visualization Manager:
           Unreliable: false
           Use Fixed Frame: true
           Use rainbow: true
-          Value: false
+          Value: true
         - Alpha: 0.4000000059604645
           Autocompute Intensity Bounds: false
           Autocompute Value Bounds:
@@ -775,7 +774,7 @@ Visualization Manager:
           Enabled: false
           Invert Rainbow: false
           Max Color: 255; 255; 255
-          Max Intensity: 50
+          Max Intensity: 100
           Min Color: 0; 0; 0
           Min Intensity: 0
           Name: ICP World
@@ -847,7 +846,7 @@ Visualization Manager:
   Value: true
   Views:
     Current:
-      Angle: -0.5149999260902405
+      Angle: 0
       Class: rviz/TopDownOrtho
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
@@ -857,10 +856,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Scale: 21.416637420654297
-      Target Frame: ego_frame
-      X: 0
-      Y: 0
+      Scale: 17.27579689025879
+      Target Frame: world
+      X: -2.390747547149658
+      Y: 1.8564375638961792
     Saved: ~
 Window Geometry:
   Displays:

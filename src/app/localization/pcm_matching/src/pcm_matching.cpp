@@ -959,17 +959,15 @@ bool PcmMatching::GetInterpolatedPose(double d_cur_time, Eigen::Affine3f& o_tran
 
     // return default transformation matrix if previous or next message is not found
     if (!b_found_before) {
-        std::cout << YELLOW << "odom last to scan cur time: " << d_cur_time - deq_odom_.back().header.stamp.toSec()
-                  << RESET << std::endl;
-        // std::cout.precision(20);
-        // std::cout << YELLOW << "d_cur_time: " << d_cur_time << " Odom: " << deq_odom_.back().header.stamp.toSec()
-        //           << RESET << std::endl;
-
         std::cout << YELLOW << "[GetInterpolatedPose] Pose before not exist!" << RESET << std::endl;
         return false;
-    } else if (b_found_before && !b_found_after) {
-        std::cout << YELLOW << "[GetInterpolatedPose] odom last to scan cur time: " << d_cur_time - deq_odom_.back().header.stamp.toSec()
-                  << RESET << std::endl;
+    } 
+    else if (b_found_before && !b_found_after) {
+
+        if(cfg_.b_debug_print){
+            std::cout << "[GetInterpolatedPose] odom last to scan cur time: " << d_cur_time - deq_odom_.back().header.stamp.toSec() 
+                      << RESET << std::endl;
+        }
 
         nav_msgs::Odometry latest_odom_msg = deq_odom_.back();
         double d_lastest_odom_to_scan_end_sec = d_cur_time - deq_odom_.back().header.stamp.toSec();
@@ -1172,16 +1170,16 @@ void PcmMatching::MainLoop() {
         // Calculate execution time
         execution_time_ = ros::Time::now() - update_time_;
 
-        if ((ros::Time::now() - last_log_time).toSec() >= 1.0) {
-            if (execution_time_.toSec() > task_period_) {
-                ROS_ERROR_STREAM("[" << task_name_ << "] Rate: " << task_period_ * 1000.0 <<
-                                 "ms, Exec Time:" << (execution_time_).toSec() * 1000.0 << "ms");
-            } else {
-                ROS_INFO_STREAM("[" << task_name_ << "] Rate: " << task_period_ * 1000.0 <<
-                                "ms, Exec Time:" << (execution_time_).toSec() * 1000.0 << "ms");
-            }
-            last_log_time = ros::Time::now();
-        }
+        // if ((ros::Time::now() - last_log_time).toSec() >= 1.0) {
+        //     if (execution_time_.toSec() > task_period_) {
+        //         ROS_ERROR_STREAM("[" << task_name_ << "] Rate: " << task_period_ * 1000.0 <<
+        //                          "ms, Exec Time:" << (execution_time_).toSec() * 1000.0 << "ms");
+        //     } else {
+        //         ROS_INFO_STREAM("[" << task_name_ << "] Rate: " << task_period_ * 1000.0 <<
+        //                         "ms, Exec Time:" << (execution_time_).toSec() * 1000.0 << "ms");
+        //     }
+        //     last_log_time = ros::Time::now();
+        // }
 
         // Publish topics
         Publish();
@@ -1193,14 +1191,8 @@ void PcmMatching::MainLoop() {
 int main(int argc, char** argv) {
     std::string node_name = "pcm_matching";
     ros::init(argc, argv, node_name);
-    ros::NodeHandle nh;
 
-    double period;
-    if (!nh.getParam("task_period/period_pcm_matching", period)) {
-        period = 1.0;
-    }
-
-    PcmMatching main_task(node_name, period);
+    PcmMatching main_task(node_name, 1.0);
     main_task.Exec(5); // use 5 callback functions
 
     return 0;

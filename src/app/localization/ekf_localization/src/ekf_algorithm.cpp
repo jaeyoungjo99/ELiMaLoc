@@ -24,7 +24,7 @@ void EkfAlgorithm::Init() {
 
     std::cout << REVERSE << "EKF Algorithm Init Start" << RESET << std::endl;
 
-    // 상태 초기화 (State initialization using configuration)
+    // State initialization using configuration
     S_.pos = Eigen::Vector3d(cfg_.d_ekf_init_x_m, cfg_.d_ekf_init_y_m, cfg_.d_ekf_init_z_m);
     S_.rot = Eigen::AngleAxisd(cfg_.d_ekf_init_yaw_deg * M_PI / 180.0, Eigen::Vector3d::UnitZ()) *
              Eigen::AngleAxisd(cfg_.d_ekf_init_pitch_deg * M_PI / 180.0, Eigen::Vector3d::UnitY()) *
@@ -36,10 +36,9 @@ void EkfAlgorithm::Init() {
     S_.ba.setZero();
     S_.grav = Eigen::Vector3d(0.0, 0.0, cfg_.d_imu_gravity);
 
-    // 공분산 초기화 (Covariance initialization using configuration)
-    P_ = Eigen::MatrixXd::Identity(STATE_ORDER, STATE_ORDER) * INIT_STATE_COV; // 대각선을 INIT_STATE_COV로 초기화
+    // Covariance initialization using configuration
+    P_ = Eigen::MatrixXd::Identity(STATE_ORDER, STATE_ORDER) * INIT_STATE_COV;
 
-    // 바이어스 항목 초기화 값 설정
     P_(S_B_ROLL_RATE, S_B_ROLL_RATE) = cfg_.d_ekf_imu_bias_cov_gyro;
     P_(S_B_PITCH_RATE, S_B_PITCH_RATE) = cfg_.d_ekf_imu_bias_cov_gyro;
     P_(S_B_YAW_RATE, S_B_YAW_RATE) = cfg_.d_ekf_imu_bias_cov_gyro;
@@ -47,10 +46,9 @@ void EkfAlgorithm::Init() {
     P_(S_B_AY, S_B_AY) = cfg_.d_ekf_imu_bias_cov_acc;
     P_(S_B_AZ, S_B_AZ) = cfg_.d_ekf_imu_bias_cov_acc;
 
-    // 중력 항목 초기화 값 설정
-    P_(S_G_X, S_G_X) = 1;
-    P_(S_G_Y, S_G_Y) = 1;
-    P_(S_G_Z, S_G_Z) = 1;
+    P_(S_G_X, S_G_X) = cfg_.d_ekf_imu_bias_cov_acc;
+    P_(S_G_Y, S_G_Y) = cfg_.d_ekf_imu_bias_cov_acc;
+    P_(S_G_Z, S_G_Z) = cfg_.d_ekf_imu_bias_cov_acc;
 
     P_(S_IMU_ROLL, S_IMU_ROLL) = cfg_.d_ekf_imu_bias_cov_gyro;
     P_(S_IMU_PITCH, S_IMU_PITCH) = cfg_.d_ekf_imu_bias_cov_gyro;
@@ -100,7 +98,7 @@ bool EkfAlgorithm::RunPrediction(double cur_timestamp) {
         return false; // Not new data
     }
 
-    // prediction dt 계산
+    // prediction dt
     double d_dt = cur_timestamp - prev_timestamp_;
 
     // dt print
@@ -114,9 +112,9 @@ bool EkfAlgorithm::RunPrediction(double cur_timestamp) {
     S_.pos += ekf_state_prev.vel * d_dt + 0.5 * ekf_state_prev.acc * d_dt * d_dt;
 
     // roll, pitch, yaw
-    // delta_angles를 쿼터니언 회전으로 직접 변환하여 적용
+    // delta_angles to quaternion rotation
     Eigen::Quaterniond delta_rot = ExpGyroToQuat(ekf_state_prev.gyro, d_dt);
-    S_.rot = (ekf_state_prev.rot * delta_rot).normalized(); // 회전 적용 및 정규화
+    S_.rot = (ekf_state_prev.rot * delta_rot).normalized(); // apply rotation and normalize
 
     // vx, vy, vz
     S_.vel += ekf_state_prev.acc * d_dt;
@@ -132,7 +130,7 @@ bool EkfAlgorithm::RunPrediction(double cur_timestamp) {
     // Q matrix initialization
     Eigen::Matrix<double, STATE_ORDER, STATE_ORDER> Q = Eigen::Matrix<double, STATE_ORDER, STATE_ORDER>::Zero();
 
-    // Q 에 분산 할당 (표준편차의 제곱)
+    // Assign variance to Q (square of standard deviation)
     Q.block<3, 3>(S_X, S_X) = Eigen::Matrix3d::Identity() * std::pow(cfg_.d_state_std_pos_m, 2) * d_dt * d_dt;
     Q.block<3, 3>(S_ROLL, S_ROLL) =
             Eigen::Matrix3d::Identity() * std::pow(cfg_.d_state_std_rot_deg * M_PI / 180.0, 2) * d_dt * d_dt;
@@ -169,8 +167,8 @@ bool EkfAlgorithm::RunPrediction(double cur_timestamp) {
 bool EkfAlgorithm::RunPredictionImu(double cur_timestamp, ImuStruct imu_input) {
     std::unique_lock<std::mutex> lock(mutex_state_, std::try_to_lock);
     if (lock.owns_lock() == false) {
-        // 이 lock이 점유하지 못했다면(다른 process가 state에 접근중이라면) prediction을 수행하지 않음
-        // Measurement Update 우선 원칙
+        // If the lock is not owned, do not perform prediction (other process is accessing state)
+        // Measurement Update priority
         return false;
     }
 
@@ -200,8 +198,9 @@ bool EkfAlgorithm::RunPredictionImu(double cur_timestamp, ImuStruct imu_input) {
     if (IsStateInitialized() == false) {
         prev_timestamp_ = cur_timestamp;
 
-        // Complementary Filter는 Yaw가 초기화 되어야, Roll Pitch 추정 가능
-        if (IsYawInitialized() == true && (cfg_.i_gps_type == GpsType::BESTPOS || cfg_.b_use_complementary_filter)) {
+        // Complementary Filter requires Yaw initialization to estimate Roll and Pitch
+        if (IsYawInitialized() == true &&
+            (cfg_.i_gps_type == GpsType::BESTPOS || cfg_.b_use_complementary_filter)) {
             ComplementaryKalmanFilter(imu_input);
         }
 
@@ -268,7 +267,7 @@ bool EkfAlgorithm::RunPredictionImu(double cur_timestamp, ImuStruct imu_input) {
             Eigen::Matrix3d::Identity() * std::pow(cfg_.d_ekf_imu_bias_cov_gyro, 2) * d_dt * d_dt;
     Q.block<3, 3>(S_B_AX, S_B_AX) =
             Eigen::Matrix3d::Identity() * std::pow(cfg_.d_ekf_imu_bias_cov_acc, 2) * d_dt * d_dt;
-    Q.block<3, 3>(S_G_X, S_G_X) = Eigen::Matrix3d::Identity() * std::pow(cfg_.d_imu_std_acc_mps, 2) * d_dt * d_dt;
+    Q.block<3, 3>(S_G_X, S_G_X) = Eigen::Matrix3d::Identity() * std::pow(cfg_.d_ekf_imu_bias_cov_acc, 2) * d_dt * d_dt;
     Q.block<3, 3>(S_IMU_ROLL, S_IMU_ROLL) =
             Eigen::Matrix3d::Identity() * std::pow(cfg_.d_state_std_rot_deg * M_PI / 180.0, 2) * d_dt * d_dt;
 
@@ -333,7 +332,8 @@ bool EkfAlgorithm::RunGnssUpdate(EkfGnssMeasurement gnss_input) {
         S_.ba.setZero();
         S_.grav = Eigen::Vector3d(0.0, 0.0, cfg_.d_imu_gravity);
 
-        P_ = Eigen::MatrixXd::Identity(STATE_ORDER, STATE_ORDER) * INIT_STATE_COV; // Initialize diagonal with INIT_STATE_COV
+        // Initialize covariance matrix (pos, rot, vel, gyro, acc)
+        P_ = Eigen::MatrixXd::Identity(S_AZ + 1, S_AZ + 1) * INIT_STATE_COV;
 
         std::cout << GREEN << REVERSE << "[RunGnssUpdate] GPS Status Initialized by Init Pose!" << RESET << std::endl;
 
@@ -352,12 +352,6 @@ bool EkfAlgorithm::RunGnssUpdate(EkfGnssMeasurement gnss_input) {
     CheckRotationStabilized();
     CheckStateStabilized();
 
-    // // Do not perform PCM update before EKF initialization (risk of map matching divergence)
-    // if (IsStateInitialized() == false && gnss_input.gnss_source == GnssSource::PCM) {
-    //     std::cout << YELLOW << "[RunGnssUpdate] GPS Status not initialized for PCM" << RESET << std::endl;
-    //     return false;
-    // }
-
     // For a certain period of time after PCM initialization, attempt EKF initialization only through PCM Update
     if (b_pcm_init_on_going_ == true && gnss_input.gnss_source == GnssSource::PCM) {
         if (i_pcm_update_count_ > 10) {
@@ -365,6 +359,7 @@ bool EkfAlgorithm::RunGnssUpdate(EkfGnssMeasurement gnss_input) {
             std::cout << BLUE << REVERSE << "[RunGnssUpdate] PCM Status Initialized!" << RESET << std::endl;
         }
         i_pcm_update_count_++;
+        std::cout << BLUE << "[RunGnssUpdate] PCM Update Init Count: " << i_pcm_update_count_ << RESET << std::endl;
     }
 
     // Main Algorithm
@@ -530,10 +525,10 @@ void EkfAlgorithm::ZuptImu(ImuStruct imu_input) {
     Eigen::Vector3d vel_error = -S_.vel;
     S_.vel += vel_coeff * vel_error; // Correct ba based on acc_error in local
 
-    if (cfg_.b_debug_imu_print) {
-        std::cout << MAGENTA;
-        std::cout << "[Zupt] Updated vel : " << S_.vel.transpose() << std::endl;
-    }
+    // if (cfg_.b_debug_imu_print) {
+    //     std::cout << MAGENTA;
+    //     std::cout << "[ZUPT] Updated vel : " << S_.vel.transpose() << std::endl;
+    // }
 
     if (S_.gyro.norm() > gyro_thre || S_.acc.head<2>().norm() > acc_thre) return;
 
@@ -550,14 +545,19 @@ void EkfAlgorithm::ZuptImu(ImuStruct imu_input) {
     Eigen::Vector3d acc_error_global = S_.rot * (imu_input.acc - S_.ba) - S_.grav;
 
     S_.ba += alpha * acc_error_loc;              // Correct ba based on acc_error in local
-    S_.grav.z() += alpha * acc_error_global.z(); // Correct grav by converting acc_error to global
+
+    if (cfg_.b_imu_estimate_gravity) {
+        S_.grav.z() += alpha * acc_error_global.z(); // Correct grav by converting acc_error to global
+    }
 
     // Debug output after update (optional)
     if (cfg_.b_debug_imu_print) {
         std::cout << MAGENTA;
-        std::cout << "[Zupt] Updated bg: " << S_.bg.transpose() << std::endl;
-        std::cout << "[Zupt] Updated ba: " << S_.ba.transpose() << std::endl;
-        std::cout << "[Zupt] Updated grav: " << S_.grav.transpose() << RESET << std::endl;
+        std::cout << "[ZUPT] Updated bg: " << S_.bg.transpose() << std::endl;
+        std::cout << "[ZUPT] Updated ba: " << S_.ba.transpose() << std::endl;
+        if (cfg_.b_imu_estimate_gravity) {
+            std::cout << "[ZUPT] Updated grav: " << S_.grav.transpose() << RESET << std::endl;
+        }
     }
 
     return;
@@ -679,15 +679,15 @@ void EkfAlgorithm::ComplementaryKalmanFilter(ImuStruct imu_input) {
 
     // std::cout<<"RollScale: "<<d_lat_noise_scale <<" PitchScale: "<<d_longi_noise_scale<<std::endl;
 
-    // 최종 measurement noise covariance
+    // Final measurement noise covariance
     R(0, 0) = std::max(std::pow(d_base_uncertainty * d_lat_noise_scale, 2), std::pow(1.0 * M_PI / 180.0, 2));   // roll
     R(1, 1) = std::max(std::pow(d_base_uncertainty * d_longi_noise_scale, 2), std::pow(1.0 * M_PI / 180.0, 2)); // pitch
 
-    // 6. Kalman gain 계산
+    // 6. Kalman gain
     Eigen::Matrix2d S = H * P_ * H.transpose() + R;                             // Innovation covariance
     Eigen::Matrix<double, STATE_ORDER, 2> K = P_ * H.transpose() * S.inverse(); // Kalman gain
 
-    // 7. EKF 상태 업데이트
+    // 7. EKF State Update
     UpdateEkfState<2, 2>(K, innovation, P_, H, S_);
 
     if (cfg_.b_debug_imu_print) {
@@ -700,16 +700,16 @@ void EkfAlgorithm::ComplementaryKalmanFilter(ImuStruct imu_input) {
 }
 
 void EkfAlgorithm::CalibrateVehicleToImu(ImuStruct imu_input) {
-    // 차량이 충분히 움직이고 있는지 확인
+    // Check if the vehicle is moving enough
     const double d_min_velocity = 3.0; // m/s
     Eigen::Vector3d vec_velocity = S_.vel;
 
-    // 속도가 너무 낮으면 보정하지 않음
+    // If velocity is too low, do not calibrate
     if (vec_velocity.norm() < d_min_velocity) {
         return;
     }
 
-    // Rotation 불확실성이 너무 높으면 보정하지 않음
+    // If rotation uncertainty is too high, do not calibrate
     if (IsRotationStabilized() == false) {
         return;
     }
@@ -720,13 +720,13 @@ void EkfAlgorithm::CalibrateVehicleToImu(ImuStruct imu_input) {
                   << std::endl;
     }
 
-    // IMU 좌표계에서의 속도 방향
-    // 만약 imu가 yaw 양수로 돌아 있으면, vel y음수 발생
+    // Velocity direction in IMU coordinate system
+    // If imu is yaw positive, vel y is negative
     Eigen::Vector3d vec_imu_vel_local = (S_.rot * S_.imu_rot.inverse()).inverse() * vec_velocity;
     Eigen::Vector3d vec_imu_vel_dir = vec_imu_vel_local.normalized();
 
-    // 두 벡터 사이의 각도 차이를 RPY로 계산
-    // 노말라이즈된 속도 벡터를 RPY로 변환
+    // Calculate the angle difference between the two vectors in RPY
+    // Normalize the velocity vector to RPY
     double d_yaw = std::atan2(vec_imu_vel_dir.y(), vec_imu_vel_dir.x());
     double d_pitch = -std::asin(vec_imu_vel_dir.z()); // 수정된 부분
     double d_roll = 0.0;                              // roll은 속도 방향으로는 추정이 어려움
@@ -740,19 +740,19 @@ void EkfAlgorithm::CalibrateVehicleToImu(ImuStruct imu_input) {
     H(1, S_IMU_PITCH) = 1.0;
     H(2, S_IMU_YAW) = 1.0;
 
-    // 측정 불확실성을 동적으로 계산
-    double d_base_uncertainty = 30.0 * M_PI / 180.0; // 기본 불확실성 10도
+    // Calculate measurement uncertainty dynamically
+    double d_base_uncertainty = 30.0 * M_PI / 180.0; // Base uncertainty 10 degrees
 
-    // 속도에 따른 스케일 계산 (속도가 높을수록 불확실성 감소)
+    // Calculate scale based on velocity (higher velocity reduces uncertainty)
     double d_vel_scale = std::exp(5.0 / vec_velocity.norm());
 
-    // 각속도에 따른 스케일 계산 (각속도가 높을수록 불확실성 증가)
+    // Calculate scale based on angular rates (higher angular rates increase uncertainty)
     Eigen::Vector3d vec_angular_rates(S_.gyro.x(), S_.gyro.y(), S_.gyro.z());
     double d_angular_scale = 1.0 + vec_angular_rates.norm() / (10.0 * M_PI / 180.0); // 10deg/s 기준
 
-    // 최종 불확실성 계산 (최소값 제한)
+    // Calculate final uncertainty (minimum value)
     double d_final_uncertainty = std::max(d_base_uncertainty * d_vel_scale * d_angular_scale,
-                                          1.0 * M_PI / 180.0 // 최소 1.0도의 불확실성 유지
+                                          1.0 * M_PI / 180.0 // Minimum uncertainty of 1.0 degree
     );
 
     Eigen::Matrix3d R = Eigen::Matrix3d::Identity() * d_final_uncertainty * d_final_uncertainty;
@@ -779,7 +779,7 @@ EgoState EkfAlgorithm::GetCurrentState() {
 
     EgoState o_ego_state;
 
-    // 마지막으로 사용된 prediction step의 timestamp 를 출력 stamp로 사용
+    // Use the timestamp of the last prediction step as the output stamp
     o_ego_state.timestamp = prev_timestamp_;
 
     double delta_time = o_ego_state.timestamp - prev_ego_state_.timestamp;

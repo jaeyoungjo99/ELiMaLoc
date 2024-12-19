@@ -110,10 +110,7 @@ private:
     void ZuptImu(ImuStruct imu_input);
     void ZuptCan(CanStruct can_input);
 
-    // 상보 필터링 함수
     void ComplementaryKalmanFilter(ImuStruct imu_input);
-
-    // Vehicle - IMU Calibration 함수
     void CalibrateVehicleToImu(ImuStruct imu_input);
 
     template <int MEAS_SIZE, int K_COLS>

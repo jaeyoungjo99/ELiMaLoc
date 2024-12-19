@@ -1,0 +1,19 @@
+<launch>
+    <arg name="location"    default="kcity"/>
+    <arg name="bag"         default="false"/>
+
+    <!-- EKF Localization Node -->
+    <include file="$(find ekf_localization)/launch/ekf_localization.launch">
+        <arg name="location" value="$(arg location)"/>
+        <arg name="bag" value="$(arg bag)"/>
+    </include>
+
+    <!-- PCM Matching Node -->
+    <include file="$(find pcm_matching)/launch/pcm_matching.launch">
+        <arg name="location" value="$(arg location)"/>
+        <arg name="bag" value="$(arg bag)"/>
+    </include>
+
+    <!-- RViz Node -->
+    <node pkg="rviz" type="rviz" name="elimaloc_rviz" args="-d $(find ekf_localization)/rviz/ekf_localization_rviz.rviz" output="screen"/>
+</launch>

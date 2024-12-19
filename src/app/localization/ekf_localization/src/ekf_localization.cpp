@@ -680,16 +680,16 @@ void EkfLocalization::MainLoop() {
         // Calculate execution time
         execution_time_ = ros::Time::now() - update_time_;
 
-        if ((ros::Time::now() - last_log_time).toSec() >= 1.0) {
-            if (execution_time_.toSec() > task_period_) {
-                ROS_ERROR_STREAM("[" << task_name_ << "] Rate: " << task_period_ * 1000.0 <<
-                                 "ms, Exec Time:" << (execution_time_).toSec() * 1000.0 << "ms");
-            } else {
-                ROS_INFO_STREAM("[" << task_name_ << "] Rate: " << task_period_ * 1000.0 <<
-                                "ms, Exec Time:" << (execution_time_).toSec() * 1000.0 << "ms");
-            }
-            last_log_time = ros::Time::now();
-        }
+        // if ((ros::Time::now() - last_log_time).toSec() >= 1.0) {
+        //     if (execution_time_.toSec() > task_period_) {
+        //         ROS_ERROR_STREAM("[" << task_name_ << "] Rate: " << task_period_ * 1000.0 <<
+        //                          "ms, Exec Time:" << (execution_time_).toSec() * 1000.0 << "ms");
+        //     } else {
+        //         ROS_INFO_STREAM("[" << task_name_ << "] Rate: " << task_period_ * 1000.0 <<
+        //                         "ms, Exec Time:" << (execution_time_).toSec() * 1000.0 << "ms");
+        //     }
+        //     last_log_time = ros::Time::now();
+        // }
 
         // Publish topics
         PublishInThread();
@@ -701,14 +701,8 @@ void EkfLocalization::MainLoop() {
 int main(int argc, char** argv) {
     std::string node_name = "ekf_localization";
     ros::init(argc, argv, node_name);
-    ros::NodeHandle nh;
 
-    double period;
-    if (!nh.getParam("task_period/period_ekf_localization", period)) {
-        period = 0.01;
-    }
-
-    EkfLocalization main_task(node_name, period);
+    EkfLocalization main_task(node_name, 0.01);
     main_task.Exec(7);
 
     return 0;
