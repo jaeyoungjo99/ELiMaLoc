@@ -333,7 +333,8 @@ bool EkfAlgorithm::RunGnssUpdate(EkfGnssMeasurement gnss_input) {
         S_.grav = Eigen::Vector3d(0.0, 0.0, cfg_.d_imu_gravity);
 
         // Initialize covariance matrix (pos, rot, vel, gyro, acc)
-        P_ = Eigen::MatrixXd::Identity(S_AZ + 1, S_AZ + 1) * INIT_STATE_COV;
+        P_.block<S_AZ + 1, S_AZ + 1>(0, 0) = 
+            Eigen::Matrix<double, S_AZ + 1, S_AZ + 1>::Identity() * INIT_STATE_COV;
 
         std::cout << GREEN << REVERSE << "[RunGnssUpdate] GPS Status Initialized by Init Pose!" << RESET << std::endl;
 

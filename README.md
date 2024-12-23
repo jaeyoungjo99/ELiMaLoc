@@ -225,6 +225,10 @@ See [CallbackInitialPose](src/app/localization/pcm_matching/src/pcm_matching.cpp
     - `elevation_variance_deg`: Radar vertical resolution uncertainty
 # Test record file
 ### Hanyang University - [Google Drive](https://drive.google.com/drive/folders/1TAqY0102CSjbJHfW3_qR7VP3j8kbSD4L?usp=sharing)
+- init_x: 3.11
+- init_y: 2.60
+- init_z: -0.4
+- init_yaw: 150.13
 ```
 hanyang_gps_imu_velodyne
 ├─ 37.238551_126.772530_0.000000_kcity_1203_filtered_02.pcd
@@ -233,6 +237,10 @@ hanyang_gps_imu_velodyne
 ```
 
 ### K City - [Google Drive](https://drive.google.com/drive/folders/1OwCfnxhYPpe8f1wP9jFGlpPVwOeegtaO?usp=sharing)
+- init_x: 52.56
+- init_y: 70.09
+- init_z: 6.32
+- init_yaw: 62.17
 ```
 kcity_gps_imu_velodyne
 ├─ 37.558200_127.044500_66.000000_hanyang_02m.pcd
