@@ -16,14 +16,9 @@ EkfLocalization::EkfLocalization(std::string node_name, double period)
     update_time_ = ros::Time::now();
     execution_time_ = ros::Duration(0.0);
 
-    ptr_ekf_algorithm_ = std::shared_ptr<EkfAlgorithm>();
     Init();
 }
-EkfLocalization::~EkfLocalization() {
-    Eigen::Vector3d imu_calib = ptr_ekf_algorithm_->GetImuCalibration();
-    std::cout << REVERSE << GREEN << "IMU Calibration deg: " << imu_calib.transpose() * 180.0 / M_PI << RESET
-              << std::endl;
-}
+EkfLocalization::~EkfLocalization() {}
 
 void EkfLocalization::Init() {
     ROS_INFO("Init function");
@@ -83,18 +78,28 @@ void EkfLocalization::Init() {
 
     pub_gps_pose_odom_ = nh.advertise<nav_msgs::Odometry>("/app/loc/gps_pose_odom", 10);
 
-    ptr_ekf_algorithm_.reset(new EkfAlgorithm(cfg_));
-    ptr_ekf_algorithm_->Init();
+    pose_estimation_params_.imu_gyro_std = cfg_.d_imu_std_gyro_dps;
+    pose_estimation_params_.imu_acc_std = cfg_.d_imu_std_acc_mps;
+    pose_estimation_params_.imu_bias_gyro_std = cfg_.d_ekf_imu_bias_cov_gyro;
+    pose_estimation_params_.imu_bias_acc_std = cfg_.d_ekf_imu_bias_cov_acc;
+    pose_estimation_params_.imu_gravity = cfg_.d_imu_gravity;
+    pose_estimation_params_.state_std_pos_m = cfg_.d_state_std_pos_m;
+    pose_estimation_params_.state_std_rot_rad = cfg_.d_state_std_rot_deg * M_PI / 180.0;
+    pose_estimation_params_.state_std_vel_mps = cfg_.d_state_std_vel_mps;
+    pose_estimation_params_.estimate_imu_bias = true;   
+    pose_estimation_params_.estimate_gravity = cfg_.b_imu_estimate_gravity;
+
+    pose_estimation_.Reset(pose_estimation_params_);
+
 
     ROS_INFO("Init function Done");
 }
 
 void EkfLocalization::CallbackNavsatFix(const sensor_msgs::NavSatFix::ConstPtr& msg) {
-    EkfGnssMeasurement gnss_meas;
+    InertialPoseLib::GnssStruct gnss_meas;
 
     // Timestamp and source
     gnss_meas.timestamp = msg->header.stamp.toSec();
-    gnss_meas.gnss_source = GnssSource::NAVSATFIX;
 
     // GPS coordinates (latitude, longitude, altitude)
     gnss_meas.pos = ProjectGpsPoint(msg->latitude, msg->longitude, msg->altitude);
@@ -119,28 +124,34 @@ void EkfLocalization::CallbackNavsatFix(const sensor_msgs::NavSatFix::ConstPtr& 
         return;
 
     // Update GNSS using EKF algorithm
-    if (ptr_ekf_algorithm_->RunGnssUpdate(gnss_meas) == true) {
-        UpdateGpsOdom(gnss_meas);
-    }
+    pose_estimation_.UpdateWithGnss(gnss_meas);
+    UpdateGpsOdom(gnss_meas);
 }
 
 void EkfLocalization::CallbackCAN(const geometry_msgs::TwistStampedConstPtr& msg) {
-    if (cfg_.b_use_can == false) return;
-    i_can_ = *msg;
-    CanStruct can_struct{0.0};
+    // if (cfg_.b_use_can == false) return;
+    // i_can_ = *msg;
+    // CanStruct can_struct{0.0};
 
-    can_struct.timestamp = i_can_.header.stamp.toSec();
-    can_struct.vel.x() = i_can_.twist.linear.x;
-    can_struct.gyro.z() = i_can_.twist.angular.z;
+    // can_struct.timestamp = i_can_.header.stamp.toSec();
+    // can_struct.vel.x() = i_can_.twist.linear.x;
+    // can_struct.gyro.z() = i_can_.twist.angular.z;
 
-    ptr_ekf_algorithm_->RunCanUpdate(can_struct);
+    // pose_estimation_.PredictVelocity(can_struct);
 }
 
 void EkfLocalization::CallbackImu(const sensor_msgs::Imu::ConstPtr& msg) {
-    if (cfg_.b_use_imu == false) return;
-    ProcessINI();
-    ImuStruct imu_struct = ImuStructConverter(*msg, cfg_.mat_ego_to_imu_rot, cfg_.vec_ego_to_imu_trans);
-    ptr_ekf_algorithm_->RunPredictionImu(imu_struct.timestamp, imu_struct);
+    // if (cfg_.b_use_imu == false) return;
+
+    sensor_msgs::Imu imu_msg = ImuConverterToSensorMsg(*msg, cfg_.mat_ego_to_imu_rot);
+
+    InertialPoseLib::ImuStruct imu_struct;
+    
+    imu_struct.timestamp = imu_msg.header.stamp.toSec();
+    imu_struct.acc = Eigen::Vector3d(imu_msg.linear_acceleration.x, imu_msg.linear_acceleration.y, imu_msg.linear_acceleration.z);
+    imu_struct.gyro = Eigen::Vector3d(imu_msg.angular_velocity.x, imu_msg.angular_velocity.y, imu_msg.angular_velocity.z);
+
+    pose_estimation_.PredictImu(imu_struct);
     PublishInThread(); // Output Imu Prediction every period
 }
 
@@ -148,10 +159,10 @@ void EkfLocalization::CallbackPcmOdom(const nav_msgs::Odometry::ConstPtr& msg) {
     if (cfg_.b_use_pcm_matching == false) return;
     nav_msgs::Odometry pcm_odom = *msg;
 
-    EkfGnssMeasurement gnss_meas, time_compensated_gnss;
+    InertialPoseLib::GnssStruct gnss_meas, time_compensated_gnss;
 
     gnss_meas.timestamp = pcm_odom.header.stamp.toSec();
-    gnss_meas.gnss_source = GnssSource::PCM;
+    // gnss_meas.gnss_source = GnssSource::PCM;
 
     // Position in global coordinates
     gnss_meas.pos = Eigen::Vector3d(pcm_odom.pose.pose.position.x, pcm_odom.pose.pose.position.y,
@@ -174,7 +185,7 @@ void EkfLocalization::CallbackPcmOdom(const nav_msgs::Odometry::ConstPtr& msg) {
     }
 
     if (GnssTimeCompensation(gnss_meas, time_compensated_gnss)) {
-        ptr_ekf_algorithm_->RunGnssUpdate(time_compensated_gnss);
+        pose_estimation_.UpdateWithGnss(time_compensated_gnss);
     }
 }
 
@@ -182,10 +193,10 @@ void EkfLocalization::CallbackPcmInitOdom(const nav_msgs::Odometry::ConstPtr& ms
     if (cfg_.b_use_pcm_matching == false) return;
     nav_msgs::Odometry pcm_init_odom = *msg;
 
-    EkfGnssMeasurement gnss_meas, time_compensated_gnss;
+    InertialPoseLib::GnssStruct gnss_meas, time_compensated_gnss;
 
     gnss_meas.timestamp = pcm_init_odom.header.stamp.toSec();
-    gnss_meas.gnss_source = GnssSource::PCM_INIT;
+    // gnss_meas.gnss_source = GnssSource::PCM_INIT;
 
     // Position in global coordinates
     gnss_meas.pos = Eigen::Vector3d(pcm_init_odom.pose.pose.position.x, pcm_init_odom.pose.pose.position.y,
@@ -200,19 +211,19 @@ void EkfLocalization::CallbackPcmInitOdom(const nav_msgs::Odometry::ConstPtr& ms
     gnss_meas.pos_cov = Eigen::Matrix3d::Identity() * 1e-9;
     gnss_meas.rot_cov = Eigen::Matrix3d::Identity() * 1e-9;
 
-    ptr_ekf_algorithm_->RunGnssUpdate(gnss_meas);
+    pose_estimation_.UpdateWithGnss(gnss_meas);
 }
 
 void EkfLocalization::Run() {
-    // If imu is not used for prediction, use ros time as the reference time for prediction
-    // If imu is used, perform prediction when Imu callback is called
-    if (cfg_.b_use_imu == true) return;
+    // // If imu is not used for prediction, use ros time as the reference time for prediction
+    // // If imu is used, perform prediction when Imu callback is called
+    // if (cfg_.b_use_imu == true) return;
 
-    double cur_timestamp = ros::Time::now().toSec();
+    // double cur_timestamp = ros::Time::now().toSec();
 
-    ProcessINI();
-    ptr_ekf_algorithm_->RunPrediction(cur_timestamp);
-    PublishInThread();
+    // ProcessINI();
+    // ptr_ekf_algorithm_->RunPrediction(cur_timestamp);
+    // PublishInThread();
 }
 
 void EkfLocalization::ProcessINI() {
@@ -322,17 +333,14 @@ void EkfLocalization::ProcessINI() {
         util_ini_parser_.ParseConfig("ekf_localization", "ekf_bestvel_meas_uncertainty_vel_mps",
                                      cfg_.d_ekf_bestvel_meas_uncertainty_vel_mps);
 
-        if (ptr_ekf_algorithm_) {
-            ptr_ekf_algorithm_->UpdateDynamicConfig(cfg_);
-        }
     }
 }
 
 // Interpolate the closest EKF State to compensate for the time difference between GNSS and EKF
-bool EkfLocalization::GnssTimeCompensation(const EkfGnssMeasurement& i_gnss, EkfGnssMeasurement& o_gnss) {
+bool EkfLocalization::GnssTimeCompensation(const InertialPoseLib::GnssStruct& i_gnss, InertialPoseLib::GnssStruct& o_gnss) {
     o_gnss = i_gnss;
 
-    EgoState closest_ekf_state, current_ekf_state;
+    InertialPoseLib::EkfState closest_ekf_state, current_ekf_state;
     {
         std::lock_guard<std::mutex> lock(mutex_ekf_state_deque_);
 
@@ -362,32 +370,26 @@ bool EkfLocalization::GnssTimeCompensation(const EkfGnssMeasurement& i_gnss, Ekf
 
     // 위치 및 회전 보정 변수 초기화
     double dx{0.0}, dy{0.0}, dz{0.0};
-    double d_roll{0.0}, d_pitch{0.0}, d_yaw{0.0};
 
+     double ratio = 0.0;
     // Perform compensation if closest_ekf_state and current_ekf_state are different
     if (fabs(current_ekf_state.timestamp - closest_ekf_state.timestamp) > 1e-5) {
-        double ratio = d_gnss_to_ekf_time_sec / (current_ekf_state.timestamp - closest_ekf_state.timestamp);
+        ratio = d_gnss_to_ekf_time_sec / (current_ekf_state.timestamp - closest_ekf_state.timestamp);
 
         // Calculate relative displacement between EKF states
-        dx = (current_ekf_state.x_m - closest_ekf_state.x_m) * ratio;
-        dy = (current_ekf_state.y_m - closest_ekf_state.y_m) * ratio;
-        dz = (current_ekf_state.z_m - closest_ekf_state.z_m) * ratio;
-
-        // Calculate the difference in rotation angles (roll, pitch, yaw)
-        d_roll = AngleDiffRad(closest_ekf_state.roll_rad, current_ekf_state.roll_rad) * ratio;
-        d_pitch = AngleDiffRad(closest_ekf_state.pitch_rad, current_ekf_state.pitch_rad) * ratio;
-        d_yaw = AngleDiffRad(closest_ekf_state.yaw_rad, current_ekf_state.yaw_rad) * ratio;
+        dx = (current_ekf_state.pos.x() - closest_ekf_state.pos.x()) * ratio;
+        dy = (current_ekf_state.pos.y() - closest_ekf_state.pos.y()) * ratio;
+        dz = (current_ekf_state.pos.z() - closest_ekf_state.pos.z()) * ratio;
     }
 
-    // Reflect relative displacement and rotation difference in GNSS
+    // Reflect relative displacement in GNSS
     o_gnss.timestamp = current_ekf_state.timestamp;
     o_gnss.pos.x() = i_gnss.pos.x() + dx;
     o_gnss.pos.y() = i_gnss.pos.y() + dy;
     o_gnss.pos.z() = i_gnss.pos.z() + dz;
 
-    Eigen::Quaterniond delta_quaternion = Eigen::AngleAxisd(d_yaw, Eigen::Vector3d::UnitZ()) *
-                                          Eigen::AngleAxisd(d_pitch, Eigen::Vector3d::UnitY()) *
-                                          Eigen::AngleAxisd(d_roll, Eigen::Vector3d::UnitX());
+    // 회전 보간을 위해 쿼터니언을 사용
+    Eigen::Quaterniond delta_quaternion = closest_ekf_state.rot.slerp(ratio, current_ekf_state.rot);
     o_gnss.rot = i_gnss.rot * delta_quaternion;
     o_gnss.rot.normalize();
 
@@ -395,8 +397,7 @@ bool EkfLocalization::GnssTimeCompensation(const EkfGnssMeasurement& i_gnss, Ekf
     if (cfg_.b_debug_print) {
         std::cout.precision(3);
         std::cout << "[GnssTimeCompensation] Time comp: " << d_gnss_to_ekf_time_sec << " Pos: " << dx << " " << dy
-                  << " " << dz << " Rot: " << d_roll * 180.0 / M_PI << " " << d_pitch * 180.0 / M_PI << " "
-                  << d_yaw * 180.0 / M_PI << std::endl;
+                  << " " << dz << std::endl;
     }
 
     return true;
@@ -404,7 +405,7 @@ bool EkfLocalization::GnssTimeCompensation(const EkfGnssMeasurement& i_gnss, Ekf
 
 // ----- Publish Result Functions ----- //
 void EkfLocalization::PublishInThread() {
-    EgoState ego_ekf_state = ptr_ekf_algorithm_->GetCurrentState();
+    InertialPoseLib::EkfState ego_ekf_state = pose_estimation_.GetCurrentState();
 
     {
         std::lock_guard<std::mutex> lock(mutex_ekf_state_deque_);
@@ -420,11 +421,11 @@ void EkfLocalization::PublishInThread() {
 
     GeographicLib::LocalCartesian local_cartesian(cfg_.ref_latitude, cfg_.ref_longitude, cfg_.ref_altitude);
     double lat, lon, ele;
-    local_cartesian.Reverse(ego_ekf_state.x_m, ego_ekf_state.y_m, ego_ekf_state.z_m, lat, lon, ele);
+    local_cartesian.Reverse(ego_ekf_state.pos.x(), ego_ekf_state.pos.y(), ego_ekf_state.pos.z(), lat, lon, ele);
 
-    ego_ekf_state.latitude = lat;
-    ego_ekf_state.longitude = lon;
-    ego_ekf_state.height = ele;
+    // ego_ekf_state.latitude = lat; // TODO:
+    // ego_ekf_state.longitude = lon;
+    // ego_ekf_state.height = ele;
 
     UpdateEgoMarker(ego_ekf_state);
     UpdateTF(ego_ekf_state);
@@ -432,7 +433,7 @@ void EkfLocalization::PublishInThread() {
     UpdateEkfText(ego_ekf_state);
 }
 
-void EkfLocalization::UpdateEgoMarker(EgoState ego_ekf_state) {
+void EkfLocalization::UpdateEgoMarker(InertialPoseLib::EkfState ego_ekf_state) {
     visualization_msgs::Marker o_ekf_ego_marker_msgs;
 
     o_ekf_ego_marker_msgs.type = visualization_msgs::Marker::CUBE;
@@ -448,17 +449,12 @@ void EkfLocalization::UpdateEgoMarker(EgoState ego_ekf_state) {
     o_ekf_ego_marker_msgs.color.g = 0.8;
     o_ekf_ego_marker_msgs.color.b = 1.0;
 
-    // Calculate orientation quaternion based on yaw, pitch, roll in EgoState
-    Eigen::Quaterniond quat = Eigen::AngleAxisd(ego_ekf_state.yaw_rad, Eigen::Vector3d::UnitZ()) *
-                              Eigen::AngleAxisd(ego_ekf_state.pitch_rad, Eigen::Vector3d::UnitY()) *
-                              Eigen::AngleAxisd(ego_ekf_state.roll_rad, Eigen::Vector3d::UnitX());
-
     // Adjust position to be 1.0m behind the center (along the x-axis in the local frame)
     double x_offset = 0.0;
     if (cfg_.i_vehicle_origin == 0) x_offset = 1.51;
     Eigen::Vector3d offset(x_offset, 0.0, o_ekf_ego_marker_msgs.scale.z / 2.0);
     Eigen::Vector3d adjusted_position =
-            Eigen::Vector3d(ego_ekf_state.x_m, ego_ekf_state.y_m, ego_ekf_state.z_m) + quat * offset;
+            Eigen::Vector3d(ego_ekf_state.pos.x(), ego_ekf_state.pos.y(), ego_ekf_state.pos.z()) + ego_ekf_state.rot * offset;
 
     // Assign the adjusted position to the marker's pose
     o_ekf_ego_marker_msgs.pose.position.x = adjusted_position.x();
@@ -466,15 +462,16 @@ void EkfLocalization::UpdateEgoMarker(EgoState ego_ekf_state) {
     o_ekf_ego_marker_msgs.pose.position.z = adjusted_position.z();
 
     // Assign quaternion to marker's orientation
-    o_ekf_ego_marker_msgs.pose.orientation.x = quat.x();
-    o_ekf_ego_marker_msgs.pose.orientation.y = quat.y();
-    o_ekf_ego_marker_msgs.pose.orientation.z = quat.z();
-    o_ekf_ego_marker_msgs.pose.orientation.w = quat.w();
+
+    o_ekf_ego_marker_msgs.pose.orientation.x = ego_ekf_state.rot.x();
+    o_ekf_ego_marker_msgs.pose.orientation.y = ego_ekf_state.rot.y();
+    o_ekf_ego_marker_msgs.pose.orientation.z = ego_ekf_state.rot.z();
+    o_ekf_ego_marker_msgs.pose.orientation.w = ego_ekf_state.rot.w();
 
     pub_ekf_ego_marker_.publish(o_ekf_ego_marker_msgs);
 }
 
-void EkfLocalization::UpdateGpsEgoMarker(EkfGnssMeasurement ego_gps_state) {
+void EkfLocalization::UpdateGpsEgoMarker(InertialPoseLib::GnssStruct ego_gps_state) {
     visualization_msgs::Marker o_gps_ego_marker_msgs;
 
     o_gps_ego_marker_msgs.type = visualization_msgs::Marker::CUBE;
@@ -512,53 +509,46 @@ void EkfLocalization::UpdateGpsEgoMarker(EkfGnssMeasurement ego_gps_state) {
     pub_gps_ego_marker_.publish(o_gps_ego_marker_msgs);
 }
 
-void EkfLocalization::UpdateTF(EgoState ego_ekf_state) {
+void EkfLocalization::UpdateTF(InertialPoseLib::EkfState ego_ekf_state) {
     tf::Transform transform;
 
-    Eigen::Quaterniond quat = Eigen::AngleAxisd(ego_ekf_state.yaw_rad, Eigen::Vector3d::UnitZ()) *
-                              Eigen::AngleAxisd(ego_ekf_state.pitch_rad, Eigen::Vector3d::UnitY()) *
-                              Eigen::AngleAxisd(ego_ekf_state.roll_rad, Eigen::Vector3d::UnitX());
-
-    transform.setOrigin(tf::Vector3(ego_ekf_state.x_m, ego_ekf_state.y_m, ego_ekf_state.z_m));
-    transform.setRotation(tf::Quaternion(quat.x(), quat.y(), quat.z(), quat.w()));
+    transform.setOrigin(tf::Vector3(ego_ekf_state.pos.x(), ego_ekf_state.pos.y(), ego_ekf_state.pos.z()));
+    transform.setRotation(tf::Quaternion(ego_ekf_state.rot.x(), ego_ekf_state.rot.y(), ego_ekf_state.rot.z(), ego_ekf_state.rot.w()));
 
     tf::StampedTransform stampedTransform(transform, ros::Time(ego_ekf_state.timestamp), "world", "ego_frame");
     tf_broadcaster_.sendTransform(stampedTransform);
 }
 
-void EkfLocalization::UpdateEkfOdom(EgoState ego_ekf_state) {
+void EkfLocalization::UpdateEkfOdom(InertialPoseLib::EkfState ego_ekf_state) {
     nav_msgs::Odometry ekf_pose_odom;
 
     ekf_pose_odom.header.frame_id = "world";
     ekf_pose_odom.header.stamp = ros::Time(ego_ekf_state.timestamp);
 
-    Eigen::Quaterniond quat = Eigen::AngleAxisd(ego_ekf_state.yaw_rad, Eigen::Vector3d::UnitZ()) *
-                              Eigen::AngleAxisd(ego_ekf_state.pitch_rad, Eigen::Vector3d::UnitY()) *
-                              Eigen::AngleAxisd(ego_ekf_state.roll_rad, Eigen::Vector3d::UnitX());
 
-    ekf_pose_odom.pose.pose.position.x = ego_ekf_state.x_m;
-    ekf_pose_odom.pose.pose.position.y = ego_ekf_state.y_m;
-    ekf_pose_odom.pose.pose.position.z = ego_ekf_state.z_m;
+    ekf_pose_odom.pose.pose.position.x = ego_ekf_state.pos.x();
+    ekf_pose_odom.pose.pose.position.y = ego_ekf_state.pos.y();
+    ekf_pose_odom.pose.pose.position.z = ego_ekf_state.pos.z();
 
-    ekf_pose_odom.pose.pose.orientation.x = quat.x();
-    ekf_pose_odom.pose.pose.orientation.y = quat.y();
-    ekf_pose_odom.pose.pose.orientation.z = quat.z();
-    ekf_pose_odom.pose.pose.orientation.w = quat.w();
+    ekf_pose_odom.pose.pose.orientation.x = ego_ekf_state.rot.x();
+    ekf_pose_odom.pose.pose.orientation.y = ego_ekf_state.rot.y();
+    ekf_pose_odom.pose.pose.orientation.z = ego_ekf_state.rot.z();
+    ekf_pose_odom.pose.pose.orientation.w = ego_ekf_state.rot.w();
 
-    ekf_pose_odom.pose.covariance[0] = ego_ekf_state.x_cov_m;
-    ekf_pose_odom.pose.covariance[7] = ego_ekf_state.y_cov_m;
-    ekf_pose_odom.pose.covariance[14] = ego_ekf_state.z_cov_m;
-    ekf_pose_odom.pose.covariance[21] = ego_ekf_state.roll_cov_rad;
-    ekf_pose_odom.pose.covariance[28] = ego_ekf_state.pitch_cov_rad;
-    ekf_pose_odom.pose.covariance[35] = ego_ekf_state.yaw_cov_rad;
+    // ekf_pose_odom.pose.covariance[0] = ego_ekf_state.pos_cov(0, 0); // TODO:
+    // ekf_pose_odom.pose.covariance[7] = ego_ekf_state.pos_cov(1, 1);
+    // ekf_pose_odom.pose.covariance[14] = ego_ekf_state.pos_cov(2, 2);
+    // ekf_pose_odom.pose.covariance[21] = ego_ekf_state.rot_cov(0, 0);
+    // ekf_pose_odom.pose.covariance[28] = ego_ekf_state.rot_cov(1, 1);
+    // ekf_pose_odom.pose.covariance[35] = ego_ekf_state.rot_cov(2, 2);
 
-    ekf_pose_odom.twist.twist.linear.x = ego_ekf_state.vx;
-    ekf_pose_odom.twist.twist.linear.y = ego_ekf_state.vy;
-    ekf_pose_odom.twist.twist.linear.z = ego_ekf_state.vz;
+    ekf_pose_odom.twist.twist.linear.x = ego_ekf_state.vel.x();
+    ekf_pose_odom.twist.twist.linear.y = ego_ekf_state.vel.y();
+    ekf_pose_odom.twist.twist.linear.z = ego_ekf_state.vel.z();
 
-    ekf_pose_odom.twist.twist.angular.x = ego_ekf_state.roll_vel;
-    ekf_pose_odom.twist.twist.angular.y = ego_ekf_state.pitch_vel;
-    ekf_pose_odom.twist.twist.angular.z = ego_ekf_state.yaw_vel;
+    ekf_pose_odom.twist.twist.angular.x = ego_ekf_state.gyro.x();
+    ekf_pose_odom.twist.twist.angular.y = ego_ekf_state.gyro.y();
+    ekf_pose_odom.twist.twist.angular.z = ego_ekf_state.gyro.z();
 
     o_ekf_pose_odom_ = ekf_pose_odom;
 
@@ -566,7 +556,7 @@ void EkfLocalization::UpdateEkfOdom(EgoState ego_ekf_state) {
 
 }
 
-void EkfLocalization::UpdateGpsOdom(EkfGnssMeasurement gnss) {
+void EkfLocalization::UpdateGpsOdom(InertialPoseLib::GnssStruct gnss) {
     nav_msgs::Odometry gps_pose_odom;
 
     gps_pose_odom.header.frame_id = "world";
@@ -593,7 +583,7 @@ void EkfLocalization::UpdateGpsOdom(EkfGnssMeasurement gnss) {
     pub_gps_pose_odom_.publish(o_gps_pose_odom_);
 }
 
-void EkfLocalization::UpdateEkfText(const EgoState ego_ekf_state) {
+void EkfLocalization::UpdateEkfText(const InertialPoseLib::EkfState ego_ekf_state) {
     jsk_rviz_plugins::OverlayText rviz_pos_type;
     rviz_pos_type.left = 300;
     rviz_pos_type.top = 0;
@@ -607,10 +597,10 @@ void EkfLocalization::UpdateEkfText(const EgoState ego_ekf_state) {
     rviz_pos_type.fg_color.a = 1.0f;
 
     std::ostringstream lat_std_stream, lon_std_stream, x_cov_stream, y_cov_stream;
-    lat_std_stream << std::fixed << std::setprecision(3) << ego_ekf_state.latitude_std;
-    lon_std_stream << std::fixed << std::setprecision(3) << ego_ekf_state.longitude_std;
-    x_cov_stream << std::fixed << std::setprecision(3) << ego_ekf_state.x_cov_m;
-    y_cov_stream << std::fixed << std::setprecision(3) << ego_ekf_state.y_cov_m;
+    // lat_std_stream << std::fixed << std::setprecision(3) << ego_ekf_state.latitude_std; // TODO:
+    // lon_std_stream << std::fixed << std::setprecision(3) << ego_ekf_state.longitude_std;
+    // x_cov_stream << std::fixed << std::setprecision(3) << ego_ekf_state.x_cov_m;
+    // y_cov_stream << std::fixed << std::setprecision(3) << ego_ekf_state.y_cov_m;
 
     rviz_pos_type.text = rviz_pos_type.text + "Lat_std:\t" + lat_std_stream.str() + "(m)";
     rviz_pos_type.text = rviz_pos_type.text + "\n" + "Lon std:\t" + lon_std_stream.str() + "(m)";
@@ -624,18 +614,21 @@ void EkfLocalization::UpdateEkfText(const EgoState ego_ekf_state) {
     std_msgs::Float32 x_plot, y_plot, z_plot, vx_plot, vy_plot, vz_plot, ax_plot, ay_plot, az_plot;
     std_msgs::Float32 roll_deg_plot, pitch_deg_plot, yaw_deg_plot;
 
-    x_plot.data = ego_ekf_state.x_m;
-    y_plot.data = ego_ekf_state.y_m;
-    z_plot.data = ego_ekf_state.z_m;
-    vx_plot.data = ego_ekf_state.vx;
-    vy_plot.data = ego_ekf_state.vy;
-    vz_plot.data = ego_ekf_state.vz;
-    ax_plot.data = ego_ekf_state.ax;
-    ay_plot.data = ego_ekf_state.ay;
-    az_plot.data = ego_ekf_state.az;
-    roll_deg_plot.data = ego_ekf_state.roll_rad * 180.0 / M_PI;
-    pitch_deg_plot.data = ego_ekf_state.pitch_rad * 180.0 / M_PI;
-    yaw_deg_plot.data = ego_ekf_state.yaw_rad * 180.0 / M_PI;
+    x_plot.data = ego_ekf_state.pos.x();
+    y_plot.data = ego_ekf_state.pos.y();
+    z_plot.data = ego_ekf_state.pos.z();
+    vx_plot.data = ego_ekf_state.vel.x();
+    vy_plot.data = ego_ekf_state.vel.y();
+    vz_plot.data = ego_ekf_state.vel.z();
+    ax_plot.data = ego_ekf_state.acc.x();
+    ay_plot.data = ego_ekf_state.acc.y();
+    az_plot.data = ego_ekf_state.acc.z();
+
+    Eigen::Vector3d angles = RotToVec(ego_ekf_state.rot.toRotationMatrix());
+
+    roll_deg_plot.data = angles(0) * 180.0 / M_PI;
+    pitch_deg_plot.data = angles(1) * 180.0 / M_PI;
+    yaw_deg_plot.data = angles(2) * 180.0 / M_PI;
 
     pub_x_plot_.publish(x_plot);
     pub_y_plot_.publish(y_plot);
@@ -675,7 +668,7 @@ void EkfLocalization::MainLoop() {
         update_time_ = ros::Time::now();
 
         // Run algorithm
-        Run();
+        // Run();
 
         // Calculate execution time
         execution_time_ = ros::Time::now() - update_time_;

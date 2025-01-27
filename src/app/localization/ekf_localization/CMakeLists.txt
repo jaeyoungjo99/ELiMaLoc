@@ -79,7 +79,6 @@ add_executable(${PROJECT_NAME}
     ${CMAKE_SOURCE_DIR}/bsw/system/ini_parser/ini_parser.cpp
 
     src/ekf_localization.cpp
-    src/ekf_algorithm.cpp
 )
 
 ## Rename C++ executable without prefix

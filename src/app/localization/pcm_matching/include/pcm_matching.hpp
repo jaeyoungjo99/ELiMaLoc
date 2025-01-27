@@ -77,6 +77,7 @@
 #include "registration.hpp"
 #include "voxel_hash_map.hpp"
 
+
 /* Types */
 struct PointXYZIT {
     PCL_ADD_POINT4D;
@@ -318,7 +319,7 @@ private:
 
     pcl::PointCloud<PointType>::Ptr o_undistort_pcptr_;
 
-    std::deque<EgoState> deq_ego_state_struct_;
+
     pcl::PointCloud<PointXYZIT>::Ptr i_lidar_pcptr_;
     std::tuple<pcl::PointCloud<PointXYZIT>::Ptr, std::string, ros::Time> i_lidar_tuple_;
 

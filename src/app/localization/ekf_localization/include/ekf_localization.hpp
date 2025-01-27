@@ -33,6 +33,7 @@
 #include <ros/package.h>
 #include <ros/ros.h>
 #include <sensor_msgs/NavSatFix.h>
+#include <sensor_msgs/Imu.h>
 #include <std_msgs/Float32.h>
 #include <tf/tf.h>
 #include <tf/transform_broadcaster.h>
@@ -41,10 +42,14 @@
 // Utility header
 #include <boost/filesystem.hpp>
 
+// InertialPoseLib
+#include <InertialPoseLib/PoseEstimation.hpp>
 
 // Algorithm header
-#include "ekf_algorithm.hpp"
+
 #include "ekf_localization_config.hpp"
+#include "localization_struct.hpp"
+#include "localization_functions.hpp"
 
 #include <GeographicLib/LocalCartesian.hpp>
 #include "GeographicLib/UTMUPS.hpp"
@@ -66,14 +71,15 @@ public:
     void PublishInThread(); // 실제로 사용되는 publish 함수
     void ProcessINI();
 
-    bool GnssTimeCompensation(const EkfGnssMeasurement& i_gnss, EkfGnssMeasurement& o_gnss);
+    bool GnssTimeCompensation(const InertialPoseLib::GnssStruct& i_gnss, 
+                                InertialPoseLib::GnssStruct& o_gnss);
 
-    void UpdateEgoMarker(EgoState ego_ekf_state);
-    void UpdateGpsEgoMarker(EkfGnssMeasurement ego_gps_state);
-    void UpdateTF(EgoState ego_ekf_state);
-    void UpdateEkfOdom(EgoState ego_ekf_state);
-    void UpdateGpsOdom(EkfGnssMeasurement gnss);
-    void UpdateEkfText(const EgoState ego_ekf_state);
+    void UpdateEgoMarker(InertialPoseLib::EkfState ego_ekf_state);
+    void UpdateGpsEgoMarker(InertialPoseLib::GnssStruct ego_gps_state);
+    void UpdateTF(InertialPoseLib::EkfState ego_ekf_state);
+    void UpdateEkfOdom(InertialPoseLib::EkfState ego_ekf_state);
+    void UpdateGpsOdom(InertialPoseLib::GnssStruct gnss);
+    void UpdateEkfText(const InertialPoseLib::EkfState ego_ekf_state);
 
     void CallbackNavsatFix(const sensor_msgs::NavSatFix::ConstPtr& msg);
     void CallbackCAN(const geometry_msgs::TwistStampedConstPtr& msg);
@@ -118,7 +124,8 @@ private:
     ros::Publisher pub_gps_pose_odom_;
 
 private: // algorithm
-    std::shared_ptr<EkfAlgorithm> ptr_ekf_algorithm_;
+    InertialPoseLib::PoseEstimation pose_estimation_;
+    InertialPoseLib::PoseEstimationParams pose_estimation_params_;
 
 private: // config
     IniParser util_ini_parser_;
@@ -133,10 +140,10 @@ private: // Variables
     // Data
     geometry_msgs::TwistStamped i_can_;
 
-    std::deque<EgoState> deq_ekf_state_;
+    std::deque<InertialPoseLib::EkfState> deq_ekf_state_;
 
-    std::vector<EgoState> vec_ego_state_;
-    std::vector<std::pair<EgoState, double>> vec_ekf_time_;
+    std::vector<InertialPoseLib::EkfState> vec_ego_state_;
+    std::vector<std::pair<InertialPoseLib::EkfState, double>> vec_ekf_time_;
 
     bool b_bestpos_used_ = false;
 
