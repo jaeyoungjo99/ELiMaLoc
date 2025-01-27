@@ -1,0 +1,3 @@
+[submodule "src/lib/third_party/InertialPoseLib"]
+	path = src/lib/third_party/InertialPoseLib
+	url = https://github.com/jaeyoungjo99/InertialPoseLib.git

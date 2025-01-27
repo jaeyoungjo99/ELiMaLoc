@@ -5,6 +5,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 ## Compile as C++14, supported in ROS Kinetic and newer
 add_compile_options(-std=c++14)
 
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "/usr/share/cmake/geographiclib/")
+
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
@@ -23,15 +25,8 @@ find_package(Eigen3 REQUIRED)
 ## System dependencies are found with CMake's conventions
 find_package(Boost REQUIRED COMPONENTS system)
 
-###################################
-## catkin specific configuration ##
-###################################
-## The catkin_package macro generates cmake config files for your package
-## Declare things to be passed to dependent projects
-## INCLUDE_DIRS: uncomment this if your package contains header files
-## LIBRARIES: libraries you create in this project that dependent projects also need
-## CATKIN_DEPENDS: catkin_packages dependent projects also need
-## DEPENDS: system dependencies of this project that dependent projects also need
+find_package(GeographicLib REQUIRED)
+
 catkin_package(
     INCLUDE_DIRS include
 #  INCLUDE_DIRS include
@@ -47,13 +42,15 @@ catkin_package(
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
 
-add_subdirectory(${CMAKE_SOURCE_DIR}/lib/third_party/GeographicLib ${CMAKE_BINARY_DIR}/GeographicLib_build)
+# add_subdirectory(${CMAKE_SOURCE_DIR}/lib/third_party/GeographicLib ${CMAKE_BINARY_DIR}/GeographicLib_build)
+add_subdirectory(${CMAKE_SOURCE_DIR}/lib/third_party/InertialPoseLib ${CMAKE_BINARY_DIR}/InertialPoseLib_build)
 
 include_directories(
     include
     ${catkin_INCLUDE_DIRS}
     ${OpenCV_INCLUDE_DIRS}
     ${EIGEN3_INCLUDE_DIR}
+    ${GeographicLib_INCLUDE_DIRS}
 
     # BSW
     ${CMAKE_SOURCE_DIR}/bsw/system/ini_parser
@@ -61,7 +58,7 @@ include_directories(
     # Library
     ../localization_interface
     # /usr/include/GeographicLib
-    ${CMAKE_SOURCE_DIR}/lib/third_party/GeographicLib/src
+    ${CMAKE_SOURCE_DIR}/lib/third_party/InertialPoseLib/src
 )
 
 ## Declare a C++ library
@@ -102,5 +99,6 @@ add_dependencies(${PROJECT_NAME}
 target_link_libraries(${PROJECT_NAME}
     ${catkin_LIBRARIES}
     ${OpenCV_LIBRARIES}
-    GeographicLib
+    ${GeographicLib_LIBRARIES}
+    libInertialPose
 )

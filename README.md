@@ -72,6 +72,8 @@ sudo apt install libgtsam-dev libgtsam-unstable-dev
 Clone code as workspace
 ```bash
 git clone https://github.com/jaeyoungjo99/ELiMaLoc.git
+git submodule init
+git submodule update
 cd ELiMaLoc
 catkin_make
 ```
