@@ -38,6 +38,9 @@
 
 #include <boost/filesystem.hpp>
 
+// InertialPoseLib
+#include <InertialPoseLib/PoseEstimation.hpp>
+
 #define S_X 0
 #define S_Y 1
 #define S_Z 2

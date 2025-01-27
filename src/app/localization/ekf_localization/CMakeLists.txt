@@ -58,7 +58,7 @@ include_directories(
     # Library
     ../localization_interface
     # /usr/include/GeographicLib
-    ${CMAKE_SOURCE_DIR}/lib/third_party/InertialPoseLib/src
+    ${CMAKE_SOURCE_DIR}/lib/third_party/InertialPoseLib/include
 )
 
 ## Declare a C++ library
