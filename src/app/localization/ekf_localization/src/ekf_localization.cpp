@@ -89,7 +89,9 @@ void EkfLocalization::Init() {
     pose_estimation_params_.estimate_imu_bias = true;   
     pose_estimation_params_.estimate_gravity = cfg_.b_imu_estimate_gravity;
 
-    pose_estimation_.Reset(pose_estimation_params_);
+    pose_estimation_.Reset(pose_estimation_params_, 
+        InertialPoseLib::Vector3(cfg_.d_ekf_init_x_m, cfg_.d_ekf_init_y_m, cfg_.d_ekf_init_z_m), 
+        InertialPoseLib::Quaternion(InertialPoseLib::AngleAxis(cfg_.d_ekf_init_yaw_deg * M_PI / 180.0, InertialPoseLib::Vector3::UnitZ())));
 
 
     ROS_INFO("Init function Done");
@@ -124,7 +126,7 @@ void EkfLocalization::CallbackNavsatFix(const sensor_msgs::NavSatFix::ConstPtr& 
         return;
 
     // Update GNSS using EKF algorithm
-    pose_estimation_.UpdateWithGnss(gnss_meas);
+    pose_estimation_.UpdateWithGnss(gnss_meas, true);
     UpdateGpsOdom(gnss_meas);
 }
 
@@ -185,7 +187,8 @@ void EkfLocalization::CallbackPcmOdom(const nav_msgs::Odometry::ConstPtr& msg) {
     }
 
     if (GnssTimeCompensation(gnss_meas, time_compensated_gnss)) {
-        pose_estimation_.UpdateWithGnss(time_compensated_gnss);
+        // pose_estimation_.UpdateWithGnss(time_compensated_gnss);
+        pose_estimation_.UpdateWithGnss(gnss_meas);
     }
 }
 
@@ -211,7 +214,7 @@ void EkfLocalization::CallbackPcmInitOdom(const nav_msgs::Odometry::ConstPtr& ms
     gnss_meas.pos_cov = Eigen::Matrix3d::Identity() * 1e-9;
     gnss_meas.rot_cov = Eigen::Matrix3d::Identity() * 1e-9;
 
-    pose_estimation_.UpdateWithGnss(gnss_meas);
+    pose_estimation_.Reset(pose_estimation_params_, gnss_meas.pos, gnss_meas.rot);
 }
 
 void EkfLocalization::Run() {
@@ -685,7 +688,7 @@ void EkfLocalization::MainLoop() {
         // }
 
         // Publish topics
-        PublishInThread();
+        // PublishInThread();
 
         loop_rate.sleep();
     }
