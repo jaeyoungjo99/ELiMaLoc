@@ -155,6 +155,8 @@ void EkfLocalization::CallbackImu(const sensor_msgs::Imu::ConstPtr& msg) {
 
     pose_estimation_.PredictImu(imu_struct);
     PublishInThread(); // Output Imu Prediction every period
+
+    pose_estimation_.PrintState();
 }
 
 void EkfLocalization::CallbackPcmOdom(const nav_msgs::Odometry::ConstPtr& msg) {
@@ -187,8 +189,7 @@ void EkfLocalization::CallbackPcmOdom(const nav_msgs::Odometry::ConstPtr& msg) {
     }
 
     if (GnssTimeCompensation(gnss_meas, time_compensated_gnss)) {
-        // pose_estimation_.UpdateWithGnss(time_compensated_gnss);
-        pose_estimation_.UpdateWithGnss(gnss_meas);
+        pose_estimation_.UpdateWithGnss(time_compensated_gnss);
     }
 }
 
@@ -215,18 +216,6 @@ void EkfLocalization::CallbackPcmInitOdom(const nav_msgs::Odometry::ConstPtr& ms
     gnss_meas.rot_cov = Eigen::Matrix3d::Identity() * 1e-9;
 
     pose_estimation_.Reset(pose_estimation_params_, gnss_meas.pos, gnss_meas.rot);
-}
-
-void EkfLocalization::Run() {
-    // // If imu is not used for prediction, use ros time as the reference time for prediction
-    // // If imu is used, perform prediction when Imu callback is called
-    // if (cfg_.b_use_imu == true) return;
-
-    // double cur_timestamp = ros::Time::now().toSec();
-
-    // ProcessINI();
-    // ptr_ekf_algorithm_->RunPrediction(cur_timestamp);
-    // PublishInThread();
 }
 
 void EkfLocalization::ProcessINI() {
@@ -374,6 +363,8 @@ bool EkfLocalization::GnssTimeCompensation(const InertialPoseLib::GnssStruct& i_
     // 위치 및 회전 보정 변수 초기화
     double dx{0.0}, dy{0.0}, dz{0.0};
 
+    InertialPoseLib::Quaternion delta_quaternion = InertialPoseLib::Quaternion::Identity();
+
      double ratio = 0.0;
     // Perform compensation if closest_ekf_state and current_ekf_state are different
     if (fabs(current_ekf_state.timestamp - closest_ekf_state.timestamp) > 1e-5) {
@@ -383,6 +374,9 @@ bool EkfLocalization::GnssTimeCompensation(const InertialPoseLib::GnssStruct& i_
         dx = (current_ekf_state.pos.x() - closest_ekf_state.pos.x()) * ratio;
         dy = (current_ekf_state.pos.y() - closest_ekf_state.pos.y()) * ratio;
         dz = (current_ekf_state.pos.z() - closest_ekf_state.pos.z()) * ratio;
+
+        delta_quaternion = InertialPoseLib::Quaternion::Identity().
+                    slerp(ratio, closest_ekf_state.rot.inverse() * current_ekf_state.rot);
     }
 
     // Reflect relative displacement in GNSS
@@ -391,8 +385,6 @@ bool EkfLocalization::GnssTimeCompensation(const InertialPoseLib::GnssStruct& i_
     o_gnss.pos.y() = i_gnss.pos.y() + dy;
     o_gnss.pos.z() = i_gnss.pos.z() + dz;
 
-    // 회전 보간을 위해 쿼터니언을 사용
-    Eigen::Quaterniond delta_quaternion = closest_ekf_state.rot.slerp(ratio, current_ekf_state.rot);
     o_gnss.rot = i_gnss.rot * delta_quaternion;
     o_gnss.rot.normalize();
 
@@ -655,43 +647,10 @@ Eigen::Vector3d EkfLocalization::ProjectGpsPoint(const double& lat, const double
 }
 
 void EkfLocalization::Exec(int num_thread) {
-    boost::thread main_thread(boost::bind(&EkfLocalization::MainLoop, this));
-
     ros::AsyncSpinner spinner(num_thread);
     spinner.start();
     ros::waitForShutdown();
 
-    main_thread.join();
-}
-
-void EkfLocalization::MainLoop() {
-    ros::Rate loop_rate(task_rate_);
-    ros::Time last_log_time = ros::Time::now();
-    while (ros::ok()) {
-        update_time_ = ros::Time::now();
-
-        // Run algorithm
-        // Run();
-
-        // Calculate execution time
-        execution_time_ = ros::Time::now() - update_time_;
-
-        // if ((ros::Time::now() - last_log_time).toSec() >= 1.0) {
-        //     if (execution_time_.toSec() > task_period_) {
-        //         ROS_ERROR_STREAM("[" << task_name_ << "] Rate: " << task_period_ * 1000.0 <<
-        //                          "ms, Exec Time:" << (execution_time_).toSec() * 1000.0 << "ms");
-        //     } else {
-        //         ROS_INFO_STREAM("[" << task_name_ << "] Rate: " << task_period_ * 1000.0 <<
-        //                         "ms, Exec Time:" << (execution_time_).toSec() * 1000.0 << "ms");
-        //     }
-        //     last_log_time = ros::Time::now();
-        // }
-
-        // Publish topics
-        // PublishInThread();
-
-        loop_rate.sleep();
-    }
 }
 
 int main(int argc, char** argv) {
@@ -699,7 +658,7 @@ int main(int argc, char** argv) {
     ros::init(argc, argv, node_name);
 
     EkfLocalization main_task(node_name, 0.01);
-    main_task.Exec(7);
+    main_task.Exec(5);
 
     return 0;
 }

@@ -67,7 +67,6 @@ public:
     virtual ~EkfLocalization();
 
     void Init();
-    void Run();
     void PublishInThread(); // 실제로 사용되는 publish 함수
     void ProcessINI();
 
@@ -90,7 +89,6 @@ public:
     Eigen::Vector3d ProjectGpsPoint(const double& lat, const double& lon, const double& height);
 
     void Exec(int num_thread=4);
-    void MainLoop();
 
 private:
     ros::Subscriber sub_navsatfix_;
