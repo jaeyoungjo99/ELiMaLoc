@@ -120,20 +120,11 @@ void PcmMatching::Publish() {}
 
 void PcmMatching::ProcessINI() {
     if (util_calib_ini_parser_.IsFileUpdated()) {
-        int i_vehicle_origin = 0;
-        util_calib_ini_parser_.ParseConfig("Vehicle Origin", "vehicle_origin", i_vehicle_origin);
-        std::string str_origin = "";
-        if (i_vehicle_origin == 0) {
-            str_origin = "Rear";
-        }
-        else {
-            str_origin = "CG";
-        }
-        util_calib_ini_parser_.ParseConfig(str_origin + " To Main LiDAR", "transform_xyz_m",
+        util_calib_ini_parser_.ParseConfig("Rear To Main LiDAR", "transform_xyz_m",
                                            cfg_.vec_d_ego_to_lidar_trans);
-        util_calib_ini_parser_.ParseConfig(str_origin + " To Main LiDAR", "rotation_rpy_deg",
+        util_calib_ini_parser_.ParseConfig("Rear To Main LiDAR", "rotation_rpy_deg",
                                            cfg_.vec_d_ego_to_lidar_rot);
-        util_calib_ini_parser_.ParseConfig(str_origin + " To Imu", "rotation_rpy_deg", cfg_.vec_d_ego_to_imu_rot);
+        util_calib_ini_parser_.ParseConfig("Rear To Imu", "rotation_rpy_deg", cfg_.vec_d_ego_to_imu_rot);
 
         if (cfg_.vec_d_ego_to_lidar_trans.size() == 3 && cfg_.vec_d_ego_to_lidar_rot.size() == 3 &&
             cfg_.vec_d_ego_to_imu_rot.size() == 3) {

@@ -219,19 +219,10 @@ void EkfLocalization::ProcessINI() {
     if (util_calib_ini_parser_.IsFileUpdated()) {
         std::cout << "[ProcessINI] Calib Ini Updated!" << std::endl;
 
-        util_calib_ini_parser_.ParseConfig("Vehicle Origin", "vehicle_origin", cfg_.i_vehicle_origin);
-
-        std::string str_origin = "";
-        if (cfg_.i_vehicle_origin == 0) {
-            str_origin = "Rear";
-        }
-        else {
-            str_origin = "CG";
-        }
-        util_calib_ini_parser_.ParseConfig(str_origin + " To Imu", "transform_xyz_m", cfg_.vec_d_ego_to_imu_trans);
-        util_calib_ini_parser_.ParseConfig(str_origin + " To Imu", "rotation_rpy_deg", cfg_.vec_d_ego_to_imu_rot);
-        util_calib_ini_parser_.ParseConfig(str_origin + " To Gps", "transform_xyz_m", cfg_.vec_d_ego_to_gps_trans);
-        util_calib_ini_parser_.ParseConfig(str_origin + " To Gps", "rotation_rpy_deg", cfg_.vec_d_ego_to_gps_rot);
+        util_calib_ini_parser_.ParseConfig("Rear To Imu", "transform_xyz_m", cfg_.vec_d_ego_to_imu_trans);
+        util_calib_ini_parser_.ParseConfig("Rear To Imu", "rotation_rpy_deg", cfg_.vec_d_ego_to_imu_rot);
+        util_calib_ini_parser_.ParseConfig("Rear To Gps", "transform_xyz_m", cfg_.vec_d_ego_to_gps_trans);
+        util_calib_ini_parser_.ParseConfig("Rear To Gps", "rotation_rpy_deg", cfg_.vec_d_ego_to_gps_rot);
 
         // Transform ego_to_imu calibration parameters
         if (cfg_.vec_d_ego_to_imu_trans.size() == 3 && cfg_.vec_d_ego_to_imu_rot.size() == 3 &&
@@ -454,8 +445,7 @@ void EkfLocalization::UpdateEgoMarker(EgoState ego_ekf_state) {
                               Eigen::AngleAxisd(ego_ekf_state.roll_rad, Eigen::Vector3d::UnitX());
 
     // Adjust position to be 1.0m behind the center (along the x-axis in the local frame)
-    double x_offset = 0.0;
-    if (cfg_.i_vehicle_origin == 0) x_offset = 1.51;
+    double x_offset = 1.51;
     Eigen::Vector3d offset(x_offset, 0.0, o_ekf_ego_marker_msgs.scale.z / 2.0);
     Eigen::Vector3d adjusted_position =
             Eigen::Vector3d(ego_ekf_state.x_m, ego_ekf_state.y_m, ego_ekf_state.z_m) + quat * offset;
@@ -491,8 +481,7 @@ void EkfLocalization::UpdateGpsEgoMarker(EkfGnssMeasurement ego_gps_state) {
     o_gps_ego_marker_msgs.color.b = 0.0;
 
     // Adjust position to be 1.0m behind the center (along the x-axis in the local frame)
-    double x_offset = 0.0;
-    if (cfg_.i_vehicle_origin == 0) x_offset = 1.51;
+    double x_offset = 1.51;
     Eigen::Vector3d offset(x_offset, 0.0, o_gps_ego_marker_msgs.scale.z / 2.0);
     Eigen::Vector3d adjusted_position =
             Eigen::Vector3d(ego_gps_state.pos.x(), ego_gps_state.pos.y(), ego_gps_state.pos.z()) +

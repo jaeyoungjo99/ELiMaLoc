@@ -12,6 +12,8 @@
     <!-- Hanyang University -->
     <arg name="map_path_hanyang" default="resources/map/pcm/37.558200_127.044500_66.000000_hanyang_02m.pcd"/>
 
+    <arg name="map_path_stairs" default="resources/map/pcm/stairs_bob.pcd"/>
+
     <param name="/use_sim_time" value="$(arg bag)"/>
     <node pkg="pcm_matching" type="pcm_matching" name="pcm_matching" output="screen">
         <param name="location"  value="$(arg location)"/>
@@ -19,5 +21,6 @@
         <param name="map_path"  value="$(arg map_path_katri)" if="$(eval location=='katri' or location=='kcity')"/>
         <param name="map_path"  value="$(arg map_path_pangyo)" if="$(eval location=='pangyo')"/>
         <param name="map_path"  value="$(arg map_path_hanyang)" if="$(eval location=='hanyang')"/>
+        <param name="map_path"  value="$(arg map_path_stairs)" if="$(eval location=='stairs')"/>
     </node>
 </launch>
