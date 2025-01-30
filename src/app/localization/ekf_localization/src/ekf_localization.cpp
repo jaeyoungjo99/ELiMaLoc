@@ -666,19 +666,7 @@ void EkfLocalization::MainLoop() {
         // Run algorithm
         Run();
 
-        // Calculate execution time
-        execution_time_ = ros::Time::now() - update_time_;
-
-        // if ((ros::Time::now() - last_log_time).toSec() >= 1.0) {
-        //     if (execution_time_.toSec() > task_period_) {
-        //         ROS_ERROR_STREAM("[" << task_name_ << "] Rate: " << task_period_ * 1000.0 <<
-        //                          "ms, Exec Time:" << (execution_time_).toSec() * 1000.0 << "ms");
-        //     } else {
-        //         ROS_INFO_STREAM("[" << task_name_ << "] Rate: " << task_period_ * 1000.0 <<
-        //                         "ms, Exec Time:" << (execution_time_).toSec() * 1000.0 << "ms");
-        //     }
-        //     last_log_time = ros::Time::now();
-        // }
+        if (cfg_.b_use_imu == true) continue;
 
         // Publish topics
         PublishInThread();
