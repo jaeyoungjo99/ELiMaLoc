@@ -55,6 +55,7 @@ typedef struct {
 
     double d_imu_gravity;
     bool b_imu_estimate_gravity;
+    bool b_imu_estimate_bias;
     bool b_imu_estimate_calibration;
 
     bool b_use_zupt;
@@ -73,7 +74,7 @@ typedef struct {
     double d_state_std_gyro_dps;
     double d_state_std_acc_mps;
 
-    double d_imu_std_gyro_dps;
+    double d_imu_std_gyro_rads;
     double d_imu_std_acc_mps;
 
     double d_ekf_imu_bias_cov_gyro;

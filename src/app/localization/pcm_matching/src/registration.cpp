@@ -117,7 +117,6 @@ Eigen::Matrix4d Registration::AlignCloudsLocalPointCov(std::vector<PointStruct>&
         J_g.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity();
         J_g.block<3, 3>(0, 3) = -1.0 * vectorToSkewSymmetricMatrix(source_global[i].local);
 
-        // double sensor_dist = source_global[i].local.norm();
         double weight_g = square(trans_th) / square(trans_th + residual_local.squaredNorm()) * 0.8 + 0.2;
 
         // 6x6 += (3x6).t * (3x3) * (3x6)

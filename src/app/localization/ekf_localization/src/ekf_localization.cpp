@@ -78,7 +78,7 @@ void EkfLocalization::Init() {
 
     pub_gps_pose_odom_ = nh.advertise<nav_msgs::Odometry>("/app/loc/gps_pose_odom", 10);
 
-    pose_estimation_params_.imu_gyro_std = cfg_.d_imu_std_gyro_dps;
+    pose_estimation_params_.imu_gyro_std = cfg_.d_imu_std_gyro_rads;
     pose_estimation_params_.imu_acc_std = cfg_.d_imu_std_acc_mps;
     pose_estimation_params_.imu_bias_gyro_std = cfg_.d_ekf_imu_bias_cov_gyro;
     pose_estimation_params_.imu_bias_acc_std = cfg_.d_ekf_imu_bias_cov_acc;
@@ -86,7 +86,7 @@ void EkfLocalization::Init() {
     pose_estimation_params_.state_std_pos_m = cfg_.d_state_std_pos_m;
     pose_estimation_params_.state_std_rot_rad = cfg_.d_state_std_rot_deg * M_PI / 180.0;
     pose_estimation_params_.state_std_vel_mps = cfg_.d_state_std_vel_mps;
-    pose_estimation_params_.estimate_imu_bias = true;   
+    pose_estimation_params_.estimate_imu_bias = cfg_.b_imu_estimate_bias;   
     pose_estimation_params_.estimate_gravity = cfg_.b_imu_estimate_gravity;
 
     pose_estimation_.Reset(pose_estimation_params_, 
@@ -187,6 +187,9 @@ void EkfLocalization::CallbackPcmOdom(const nav_msgs::Odometry::ConstPtr& msg) {
             gnss_meas.rot_cov(row, col) = pcm_odom.pose.covariance[(row + 3) * 6 + (col + 3)];
         }
     }
+    std::cout << "\nPCM ODOM POS COV"<<std::endl;
+    std::cout << "POS: " << gnss_meas.pos_cov(0, 0) << " " << gnss_meas.pos_cov(1, 1) << " " << gnss_meas.pos_cov(2, 2) << std::endl;
+    std::cout << "ROT: " << gnss_meas.rot_cov(0, 0) << " " << gnss_meas.rot_cov(1, 1) << " " << gnss_meas.rot_cov(2, 2) << std::endl;
 
     if (GnssTimeCompensation(gnss_meas, time_compensated_gnss)) {
         pose_estimation_.UpdateWithGnss(time_compensated_gnss);
@@ -200,7 +203,7 @@ void EkfLocalization::CallbackPcmInitOdom(const nav_msgs::Odometry::ConstPtr& ms
     InertialPoseLib::GnssStruct gnss_meas, time_compensated_gnss;
 
     gnss_meas.timestamp = pcm_init_odom.header.stamp.toSec();
-    // gnss_meas.gnss_source = GnssSource::PCM_INIT;
+    // gnss_meas.gnss_source = GnssSource::PCM_INIT; // TODO:
 
     // Position in global coordinates
     gnss_meas.pos = Eigen::Vector3d(pcm_init_odom.pose.pose.position.x, pcm_init_odom.pose.pose.position.y,
@@ -212,8 +215,8 @@ void EkfLocalization::CallbackPcmInitOdom(const nav_msgs::Odometry::ConstPtr& ms
     gnss_meas.pos_cov.setZero();
     gnss_meas.rot_cov.setZero();
 
-    gnss_meas.pos_cov = Eigen::Matrix3d::Identity() * 1e-9;
-    gnss_meas.rot_cov = Eigen::Matrix3d::Identity() * 1e-9;
+    gnss_meas.pos_cov = Eigen::Matrix3d::Identity() * 1e-3;
+    gnss_meas.rot_cov = Eigen::Matrix3d::Identity() * 1e-3;
 
     pose_estimation_.Reset(pose_estimation_params_, gnss_meas.pos, gnss_meas.rot);
 }
@@ -277,6 +280,7 @@ void EkfLocalization::ProcessINI() {
 
         util_ini_parser_.ParseConfig("ekf_localization", "imu_gravity", cfg_.d_imu_gravity);
         util_ini_parser_.ParseConfig("ekf_localization", "imu_estimate_gravity", cfg_.b_imu_estimate_gravity);
+        util_ini_parser_.ParseConfig("ekf_localization", "imu_estimate_bias", cfg_.b_imu_estimate_bias);
         util_ini_parser_.ParseConfig("ekf_localization", "imu_estimate_calibration", cfg_.b_imu_estimate_calibration);
         util_ini_parser_.ParseConfig("ekf_localization", "use_zupt", cfg_.b_use_zupt);
         util_ini_parser_.ParseConfig("ekf_localization", "use_complementary_filter", cfg_.b_use_complementary_filter);
@@ -295,7 +299,7 @@ void EkfLocalization::ProcessINI() {
         util_ini_parser_.ParseConfig("ekf_localization", "ekf_state_uncertainty_gyro_dps", cfg_.d_state_std_gyro_dps);
         util_ini_parser_.ParseConfig("ekf_localization", "ekf_state_uncertainty_acc_mps", cfg_.d_state_std_acc_mps);
 
-        util_ini_parser_.ParseConfig("ekf_localization", "ekf_imu_uncertainty_gyro_dps", cfg_.d_imu_std_gyro_dps);
+        util_ini_parser_.ParseConfig("ekf_localization", "ekf_imu_uncertainty_gyro_rads", cfg_.d_imu_std_gyro_rads);
         util_ini_parser_.ParseConfig("ekf_localization", "ekf_imu_uncertainty_acc_mps", cfg_.d_imu_std_acc_mps);
 
         util_ini_parser_.ParseConfig("ekf_localization", "ekf_imu_bias_cov_gyro", cfg_.d_ekf_imu_bias_cov_gyro);

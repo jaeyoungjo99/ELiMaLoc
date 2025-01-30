@@ -124,7 +124,8 @@ void PcmMatching::ProcessINI() {
                                            cfg_.vec_d_ego_to_lidar_trans);
         util_calib_ini_parser_.ParseConfig("Rear To Main LiDAR", "rotation_rpy_deg",
                                            cfg_.vec_d_ego_to_lidar_rot);
-        util_calib_ini_parser_.ParseConfig("Rear To Imu", "rotation_rpy_deg", cfg_.vec_d_ego_to_imu_rot);
+        util_calib_ini_parser_.ParseConfig("Rear To Imu", "rotation_rpy_deg",
+                                           cfg_.vec_d_ego_to_imu_rot);
 
         if (cfg_.vec_d_ego_to_lidar_trans.size() == 3 && cfg_.vec_d_ego_to_lidar_rot.size() == 3 &&
             cfg_.vec_d_ego_to_imu_rot.size() == 3) {
@@ -1078,8 +1079,8 @@ void PcmMatching::PublishPcmOdom(Eigen::Matrix4d icp_ego_pose, ros::Time thisSta
         2. Normalize remaining matrix elements based on minimum value of diagonal matrix of Covariance
         3. Multiply d_icp_pose_std_m to normalized matrix for Translation and angle_std for Rotation
     */
-
-    double d_icp_pose_std_m = std::max(cfg_.d_icp_pose_std_m, 0.25);
+    std::cout << "icp_pose_std_m: " << cfg_.d_icp_pose_std_m << std::endl;
+    double d_icp_pose_std_m = std::max(cfg_.d_icp_pose_std_m, 0.02);
 
     // Translation uncertainty (3x3 block)
     Eigen::Matrix3d translation_covariance =
@@ -1090,7 +1091,8 @@ void PcmMatching::PublishPcmOdom(Eigen::Matrix4d icp_ego_pose, ros::Time thisSta
     Eigen::Matrix3d rotation_covariance = icp_local_cov_.block<3, 3>(3, 3);
     Eigen::Vector3d rotation_cov_norm = NormalizeDiagonalCovariance(rotation_covariance);
 
-    double angle_std = d_icp_pose_std_m * M_PI / 180.0; 
+    double angle_std = std::max(cfg_.d_icp_pose_std_m * 1.0 * M_PI / 180.0,
+                                0.1 * M_PI / 180.0); 
 
     Eigen::Matrix3d translation_cov_norm_mat =
             NormalizeCovariance(translation_covariance) * d_icp_pose_std_m * d_icp_pose_std_m;
@@ -1101,12 +1103,14 @@ void PcmMatching::PublishPcmOdom(Eigen::Matrix4d icp_ego_pose, ros::Time thisSta
 }
 
 void PcmMatching::BroadcastStaticTf(ros::Time thisStamp, std::string lidarFrame, std::string imuFrame) {
-    static tf2_ros::StaticTransformBroadcaster static_broadcaster;
+    static tf2_ros::StaticTransformBroadcaster static_broadcaster_lidar;
+    static tf2_ros::StaticTransformBroadcaster static_broadcaster_imu;
     geometry_msgs::TransformStamped static_transform_stamped;
 
     // Set header
     static_transform_stamped.header.stamp = thisStamp;
     static_transform_stamped.header.frame_id = "ego_frame"; // ego frame
+
     static_transform_stamped.child_frame_id = lidarFrame; // lidar frame
 
     // Set translation
@@ -1122,7 +1126,7 @@ void PcmMatching::BroadcastStaticTf(ros::Time thisStamp, std::string lidarFrame,
     static_transform_stamped.transform.rotation.w = quat_lidar.w();
 
     // Broadcast the transform
-    static_broadcaster.sendTransform(static_transform_stamped);
+    static_broadcaster_lidar.sendTransform(static_transform_stamped);
 
     // Repeat for IMU
     static_transform_stamped.child_frame_id = imuFrame; // imu frame
@@ -1135,7 +1139,7 @@ void PcmMatching::BroadcastStaticTf(ros::Time thisStamp, std::string lidarFrame,
     static_transform_stamped.transform.rotation.w = quat_imu.w();
 
     // Broadcast the transform
-    static_broadcaster.sendTransform(static_transform_stamped);
+    static_broadcaster_imu.sendTransform(static_transform_stamped);
 }
 
 
